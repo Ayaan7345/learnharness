@@ -140,7 +140,7 @@ extension WebViewModel: WKUIDelegate {
 	}
 
 	/// Dictation: the microphone is granted to the server's own pages only.
-	func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
+	func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
 		guard let server else { return .deny }
 		let port = origin.port == 0 ? nil : origin.port
 		return origin.protocol == server.scheme && origin.host == server.host && port == server.port && type == .microphone ? .grant : .deny

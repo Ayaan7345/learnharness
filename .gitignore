@@ -27,3 +27,4 @@ xai-credentials.json*
 ios/build/
 ios/LearnHarness.xcodeproj/xcuserdata/
 ios/LearnHarness.xcodeproj/project.xcworkspace/xcuserdata/
+ios/build-device/
