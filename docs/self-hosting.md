@@ -57,6 +57,9 @@ The DMG lands in `dist/`. Auto-updates check this fork's GitHub releases
 Sign a device out with `POST /api/auth/logout`. Sign **every** device out by
 rotating `LH_SESSION_SECRET` (or the password, if no secret is set).
 
+Setting, changing or looking up the password, step by step:
+[server-password.md](server-password.md).
+
 Without `LH_SERVER_PASSWORD` nothing changes: desktop and `npm run dev`
 behave exactly as before.
 
