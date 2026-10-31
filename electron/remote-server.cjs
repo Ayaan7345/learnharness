@@ -26,12 +26,16 @@ function normalizeServerUrl(input) {
 	return { url: parsed.origin };
 }
 
+// Home-network and Tailscale names that never resolve on the public internet.
+const PRIVATE_SUFFIXES = [".local", ".lan", ".home", ".internal", ".home.arpa", ".ts.net"];
+
 /** Plain HTTP is fine on loopback, private LAN ranges and Tailscale; anywhere
  *  else the password and session cookie would cross the internet unencrypted. */
 function insecureRemote(url) {
 	const { protocol, hostname } = new URL(url);
 	if (protocol === "https:") return false;
-	if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".ts.net") || hostname === "[::1]") return false;
+	if (hostname === "localhost" || hostname === "[::1]" || !hostname.includes(".")) return false;
+	if (PRIVATE_SUFFIXES.some((suffix) => hostname.endsWith(suffix))) return false;
 	const octets = hostname.split(".").map(Number);
 	if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
 	const [a, b] = octets;

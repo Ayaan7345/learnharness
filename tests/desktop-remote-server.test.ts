@@ -17,7 +17,7 @@ test("typed addresses normalize to a server origin", () => {
 });
 
 test("plain http is only flagged off private networks", () => {
-	for (const ok of ["https://lh.example.com", "http://localhost:3000", "http://127.0.0.1:3000", "http://192.168.1.20:3000", "http://10.0.0.5:3000", "http://172.20.0.2:3000", "http://100.101.1.2:3000", "http://box.tail1234.ts.net:3000", "http://nas.local:3000"]) {
+	for (const ok of ["https://lh.example.com", "http://localhost:3000", "http://127.0.0.1:3000", "http://192.168.1.20:3000", "http://10.0.0.5:3000", "http://172.20.0.2:3000", "http://100.101.1.2:3000", "http://box.tail1234.ts.net:3000", "http://nas.local:3000", "http://code.lab.lan:3000", "http://box.home.arpa:3000", "http://my-server:3000"]) {
 		assert.equal(insecureRemote(ok), false, ok);
 	}
 	for (const bad of ["http://lh.example.com", "http://8.8.8.8:3000", "http://172.32.0.1:3000"]) assert.equal(insecureRemote(bad), true, bad);
