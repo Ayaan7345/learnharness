@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { fuzzyScore } from "@/src/core";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { isNativeShell } from "@/components/native-shell";
 import type { ChatListItem } from "@/src/core";
 import { kbdEventForAction } from "@/src/core";
 import { notifySettingsSaved } from "@/components/settings-signal";
@@ -122,6 +123,8 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 			document.documentElement.dataset.lhPlatform = window.lh?.platform ?? "";
 		}
 		if (IS_IOS_APP) document.documentElement.classList.add("lh-ios");
+		// The iPhone app's native shell draws its own navigation (globals.css).
+		if (isNativeShell()) document.documentElement.classList.add("lh-native");
 
 		// THE ZOOM TRUTH (owner round 7, 2026-10-05): ⌘±/⌘0 zoom the UI
 		// (Electron zoomFactor) while the native traffic lights stay
@@ -216,7 +219,7 @@ export function SidebarToggle() {
 	return (
 		<span
 			className={cn(
-				"sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200",
+				"lh-sidebar-toggle sidebar-motion lh-no-drag relative flex h-9 shrink-0 overflow-hidden duration-200",
 				open ? "w-0 -mr-3" : "w-9 mr-0 lh-closed-toggle",
 			)}
 		>

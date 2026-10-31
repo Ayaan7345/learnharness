@@ -21,6 +21,7 @@
  * switching sections never refetches.
  */
 
+import { NATIVE_OPEN_SETTINGS_EVENT, postToNative } from "@/components/native-shell";
 import {
 	createContext,
 	useCallback,
@@ -90,11 +91,27 @@ export function SettingsDialogProvider({
 		setShow(true);
 	}, []);
 	useEffect(() => window.lh?.onOpenSettings?.((section) => open(section)), [open]);
+	// The iPhone app's Settings tab opens a section directly (native-shell.ts);
+	// a request made before this provider mounted waits on the window.
+	useEffect(() => {
+		const onNativeOpen = (e: Event) => open((e as CustomEvent<string | undefined>).detail);
+		window.addEventListener(NATIVE_OPEN_SETTINGS_EVENT, onNativeOpen);
+		const pendingSection = window.lhNativePendingSettings;
+		if (pendingSection !== undefined) {
+			window.lhNativePendingSettings = undefined;
+			open(pendingSection || undefined);
+		}
+		return () => window.removeEventListener(NATIVE_OPEN_SETTINGS_EVENT, onNativeOpen);
+	}, [open]);
+	const close = useCallback(() => {
+		setShow(false);
+		postToNative({ type: "settingsClosed" });
+	}, []);
 	return (
 		<ChatGPTUIProvider><NativeSubscriptionUIProvider><DialogContext.Provider value={{ open }}>
 			{children}
 			{show && (
-				<SettingsDialog onClose={() => setShow(false)} initialSection={landOn} initialRow={landOnRow} />
+				<SettingsDialog onClose={close} initialSection={landOn} initialRow={landOnRow} />
 			)}
 		</DialogContext.Provider></NativeSubscriptionUIProvider></ChatGPTUIProvider>
 	);

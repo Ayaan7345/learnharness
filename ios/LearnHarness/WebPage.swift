@@ -1,26 +1,50 @@
 import SwiftUI
 import WebKit
 
-/// Owns the one WKWebView for the connected server so it survives SwiftUI
-/// view updates, and publishes load state for the native overlays.
+/// One server page shown inside a native screen (a session's transcript, the
+/// graph, settings). The app draws the chrome around it; the page reports its
+/// state over the `lhNative` message handler (components/native-shell.ts).
 @MainActor
 @Observable
-final class WebViewModel: NSObject {
+final class WebPage: NSObject {
 	private(set) var loadError: String?
 	private(set) var isFirstLoad = true
 
-	@ObservationIgnored private var server: URL?
+	let server: URL
+	let path: String
+	/// Messages the page posts with window.webkit.messageHandlers.lhNative.
+	@ObservationIgnored var onMessage: (([String: Any]) -> Void)?
+	/// The page moved to another path of the server (client-side routing
+	/// included). Return true when the app took over that destination.
+	@ObservationIgnored var onRoute: ((String) -> Bool)?
+
 	@ObservationIgnored private var downloads: [ObjectIdentifier: URL] = [:]
+	@ObservationIgnored private var urlObservation: NSKeyValueObservation?
 	@ObservationIgnored private(set) lazy var webView: WKWebView = makeWebView()
 
-	func load(_ server: URL) {
+	/// Runs before the page's own scripts on every load.
+	private let startupScript: String?
+
+	init(server: URL, path: String, startupScript: String? = nil) {
 		self.server = server
-		loadError = nil
-		webView.load(URLRequest(url: server))
+		self.path = path
+		self.startupScript = startupScript
 	}
 
-	func reload(_ server: URL) {
-		if webView.url == nil || loadError != nil || self.server != server { load(server) } else { webView.reload() }
+	var homeURL: URL { URL(string: path, relativeTo: server)!.absoluteURL }
+
+	func load() {
+		loadError = nil
+		webView.load(URLRequest(url: homeURL))
+	}
+
+	func reload() {
+		if webView.url == nil || loadError != nil { load() } else { webView.reload() }
+	}
+
+	/// Runs a script in the page, ignoring pages that aren't ready for it.
+	func run(_ script: String) {
+		webView.evaluateJavaScript(script) { _, _ in }
 	}
 
 	private func makeWebView() -> WKWebView {
@@ -30,24 +54,43 @@ final class WebViewModel: NSObject {
 		config.allowsInlineMediaPlayback = true
 		config.mediaTypesRequiringUserActionForPlayback = []
 		// Keep the mobile Safari tokens so the web app sees a phone; the suffix
-		// identifies this app (apps-only servers refuse anything else).
-		config.applicationNameForUserAgent = "Mobile/15E148 \(ServerAddress.appUserAgentToken)"
-		config.userContentController.addUserScript(WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+		// identifies this app (apps-only servers refuse anything else) and
+		// asks the pages to leave navigation and the composer to the app.
+		config.applicationNameForUserAgent = "Mobile/15E148 \(ServerAddress.appUserAgentToken) \(ServerAddress.nativeShellToken)"
+		let content = config.userContentController
+		content.addUserScript(WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+		if let startupScript {
+			content.addUserScript(WKUserScript(source: startupScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+		}
+		content.add(WeakMessageHandler(self), name: "lhNative")
 
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = self
 		webView.uiDelegate = self
 		webView.isOpaque = false
-		webView.backgroundColor = UIColor(red: 0x14 / 255, green: 0x14 / 255, blue: 0x14 / 255, alpha: 1)
+		webView.backgroundColor = UIColor(Color.appBackground)
 		webView.scrollView.backgroundColor = webView.backgroundColor
 		// The web app is a fixed-height shell with its own scrolling panes.
 		webView.scrollView.bounces = false
 		webView.scrollView.contentInsetAdjustmentBehavior = .never
-		webView.allowsBackForwardNavigationGestures = true
 		#if DEBUG
 		webView.isInspectable = true
 		#endif
+		// Next.js routes with pushState, which never reaches the navigation
+		// delegate; the URL property does change, so watch that.
+		urlObservation = webView.observe(\.url, options: [.new]) { [weak self] webView, _ in
+			MainActor.assumeIsolated { self?.urlChanged(webView.url) }
+		}
 		return webView
+	}
+
+	private func urlChanged(_ url: URL?) {
+		guard let url, isServerOrigin(url), url.path() != homeURL.path() else { return }
+		if url.path() == "/login" { return }
+		if onRoute?(url.path()) == true {
+			// The app opened that destination natively; put this page back.
+			if webView.canGoBack { webView.goBack() } else { load() }
+		}
 	}
 
 	/// iOS zooms the page when focusing an input with text under 16px and
@@ -60,9 +103,14 @@ final class WebViewModel: NSObject {
 	})();
 	"""
 
-	private func isServerOrigin(_ url: URL?) -> Bool {
-		guard let url, let server else { return false }
+	func isServerOrigin(_ url: URL?) -> Bool {
+		guard let url else { return false }
 		return url.scheme == server.scheme && url.host == server.host && url.port == server.port
+	}
+
+	fileprivate func receive(_ body: Any) {
+		guard let message = body as? [String: Any] else { return }
+		onMessage?(message)
 	}
 
 	fileprivate func present(_ controller: UIViewController) {
@@ -76,9 +124,19 @@ final class WebViewModel: NSObject {
 	}
 }
 
+/// WKUserContentController retains its handlers; this keeps the page releasable.
+private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
+	weak var page: WebPage?
+	init(_ page: WebPage) { self.page = page }
+
+	func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+		MainActor.assumeIsolated { page?.receive(message.body) }
+	}
+}
+
 // MARK: - Navigation: stay on the server, everything else opens in Safari
 
-extension WebViewModel: WKNavigationDelegate {
+extension WebPage: WKNavigationDelegate {
 	func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
 		if action.shouldPerformDownload { return .download }
 		guard action.targetFrame?.isMainFrame ?? true, let url = action.request.url else { return .allow }
@@ -124,26 +182,19 @@ extension WebViewModel: WKNavigationDelegate {
 
 	func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
 		// iOS may reclaim the page's process in the background; start fresh.
-		if let server { load(server) }
+		load()
 	}
 }
 
 // MARK: - Browser features the page relies on
 
-extension WebViewModel: WKUIDelegate {
-	/// window.open / target=_blank: the app has a single window, so these go to Safari.
+extension WebPage: WKUIDelegate {
+	/// window.open / target=_blank: pages stay in place, other sites go to Safari.
 	func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
 		if let url = action.request.url {
 			if isServerOrigin(url) { webView.load(action.request) } else { UIApplication.shared.open(url) }
 		}
 		return nil
-	}
-
-	/// Dictation: the microphone is granted to the server's own pages only.
-	func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo, type: WKMediaCaptureType) async -> WKPermissionDecision {
-		guard let server else { return .deny }
-		let port = origin.port == 0 ? nil : origin.port
-		return origin.protocol == server.scheme && origin.host == server.host && port == server.port && type == .microphone ? .grant : .deny
 	}
 
 	func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
@@ -176,7 +227,7 @@ extension WebViewModel: WKUIDelegate {
 
 // MARK: - Downloads (e.g. Markdown export) go to the share sheet
 
-extension WebViewModel: WKDownloadDelegate {
+extension WebPage: WKDownloadDelegate {
 	func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String) async -> URL? {
 		let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
 		try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -198,16 +249,39 @@ extension WebViewModel: WKDownloadDelegate {
 	}
 }
 
-/// SwiftUI host for the model's long-lived web view.
-struct WebView: UIViewRepresentable {
-	let server: URL
-	let model: WebViewModel
+/// SwiftUI host for a page's long-lived web view, with loading and
+/// can't-reach states drawn natively.
+struct WebPageView: View {
+	let page: WebPage
 
-	func makeUIView(context: Context) -> WKWebView {
-		let webView = model.webView
-		if webView.url == nil { model.load(server) }
-		return webView
+	var body: some View {
+		ZStack {
+			Color.appBackground
+			PageHost(page: page)
+				.opacity(page.loadError == nil ? 1 : 0)
+			if let error = page.loadError {
+				ContentUnavailableView {
+					Label("Couldn't load this page", systemImage: "wifi.exclamationmark")
+				} description: {
+					Text(error)
+				} actions: {
+					Button("Try Again") { page.reload() }.buttonStyle(.borderedProminent)
+				}
+			} else if page.isFirstLoad {
+				ProgressView()
+			}
+		}
 	}
 
-	func updateUIView(_ webView: WKWebView, context: Context) {}
+	private struct PageHost: UIViewRepresentable {
+		let page: WebPage
+
+		func makeUIView(context: Context) -> WKWebView {
+			let webView = page.webView
+			if webView.url == nil { page.load() }
+			return webView
+		}
+
+		func updateUIView(_ webView: WKWebView, context: Context) {}
+	}
 }

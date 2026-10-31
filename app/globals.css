@@ -654,3 +654,18 @@ body {
 	flex-shrink: 0;
 	white-space: nowrap;
 }
+
+/* ─── iPhone app, native shell (ios/, components/native-shell.ts) ─────────
+   <html class="lh-native"> is set when the iPhone app draws its own tab bar,
+   navigation bar and composer. The web's sidebar, its toggle, the chat title
+   and an empty composer shell are the app's job there, so they hide. */
+.lh-native .lh-sidebar,
+.lh-native .lh-ios-backdrop,
+.lh-native .lh-sidebar-toggle,
+.lh-native .lh-chat-title,
+.lh-native [data-testid="phase-chip"] {
+	display: none;
+}
+.lh-native .lh-dock-shell:not(:has(> div > *)) {
+	display: none;
+}
