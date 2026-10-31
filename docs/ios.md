@@ -20,6 +20,16 @@ dictation — and everything stays in sync because it all lives on the server.
 - A "Can't reach your server" screen with Try Again / Change Server when
   you're away from home without Tailscale.
 
+## Phone layout
+
+Inside the iPhone app (and only there) the interface adapts to the screen:
+the sidebar starts closed and slides over the page (tap outside it to close;
+picking a session closes it), header buttons become icons, session titles
+are smaller, Settings is full screen with its sections as tabs, and graph
+nodes have finger-sized tap targets. The app is detected by its
+User-Agent token; the rules live under "iPhone app" at the end of
+`app/globals.css`, with the sidebar behaviour in `components/sidebar.tsx`.
+
 ## Install it on your iPhone
 
 You need a Mac with Xcode and an Apple ID. No App Store or TestFlight needed.

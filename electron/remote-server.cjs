@@ -8,6 +8,11 @@
  * remote server authenticates with its own sign-in cookie.
  */
 const fs = require("node:fs");
+const { version } = require("../package.json");
+
+/** Appended to every request's User-Agent so a server in apps-only mode
+ *  (LH_APPS_ONLY, src/server/remote-access.ts) lets this app in. */
+const APP_USER_AGENT_TOKEN = `LearnHarnessDesktop/${version}`;
 
 /** Typed address → server origin, or a user-facing error. A bare host gets
  *  http:// when it names a port (LAN / Tailscale), https:// otherwise. */
@@ -62,7 +67,11 @@ function writeServerChoice(file, choice) {
 async function probeServer(url, fetchImpl = fetch, timeoutMs = 8000) {
 	let response;
 	try {
-		response = await fetchImpl(`${url}/login`, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+		response = await fetchImpl(`${url}/login`, {
+			redirect: "manual",
+			headers: { "User-Agent": `LearnHarness ${APP_USER_AGENT_TOKEN}` },
+			signal: AbortSignal.timeout(timeoutMs),
+		});
 	} catch (err) {
 		const reason = err?.name === "TimeoutError" ? "it didn't answer in time" : "nothing answered";
 		return { ok: false, error: `Couldn't reach ${url} (${reason}). Check the address and that the server is running.` };
@@ -72,4 +81,4 @@ async function probeServer(url, fetchImpl = fetch, timeoutMs = 8000) {
 	return { ok: false, error: `${url} answered, but it isn't a LearnHarness server with server mode (the self-hosting branch).` };
 }
 
-module.exports = { normalizeServerUrl, insecureRemote, readServerChoice, writeServerChoice, probeServer };
+module.exports = { APP_USER_AGENT_TOKEN, normalizeServerUrl, insecureRemote, readServerChoice, writeServerChoice, probeServer };

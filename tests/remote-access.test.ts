@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { NextRequest } from "next/server";
 import {
 	SESSION_COOKIE,
+	appsOnlyAllowed,
 	SESSION_TTL_MS,
 	isPublicPath,
 	loginResponse,
@@ -110,5 +111,28 @@ test("login route: sets a secure session cookie on success, throttles repeated f
 		assert(loginThrottled("10.0.0.3"));
 		const throttled = await post(env.LH_SERVER_PASSWORD, "10.0.0.3");
 		assert.match(throttled.headers.get("location") ?? "", /error=throttled/, "even the right password is refused while throttled");
+	});
+});
+
+test("apps only: browsers are refused before sign-in, the two apps and API tokens get through", async () => {
+	const desktopUA = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/150 Electron/44.9.3 Safari/537.36 LearnHarnessDesktop/0.4.0";
+	const iosUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 LearnHarnessiOS/1.0";
+	const safariUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 Version/26.0 Mobile/15E148 Safari/604.1";
+	assert(appsOnlyAllowed(new Headers({ "user-agent": safariUA }), env), "off unless LH_APPS_ONLY=1");
+	const appsEnv = { ...env, LH_APPS_ONLY: "1", LH_API_TOKEN: "k".repeat(40) };
+	assert(!appsOnlyAllowed(new Headers({ "user-agent": safariUA }), appsEnv));
+	assert(!appsOnlyAllowed(new Headers(), appsEnv));
+	assert(appsOnlyAllowed(new Headers({ "user-agent": desktopUA }), appsEnv));
+	assert(appsOnlyAllowed(new Headers({ "user-agent": iosUA }), appsEnv));
+	assert(appsOnlyAllowed(new Headers({ "user-agent": "curl/8", authorization: `Bearer ${"k".repeat(40)}` }), appsEnv));
+	assert(!appsOnlyAllowed(new Headers({ "user-agent": "LearnHarnessiOS" }), appsEnv), "needs a version");
+	assert(appsOnlyAllowed(new Headers({ "user-agent": safariUA }), { LH_APPS_ONLY: "1" }), "needs server mode too");
+
+	await withEnv({ ...env, LH_APPS_ONLY: "1" }, () => {
+		const page = proxy(new NextRequest(origin + "/login", { headers: { "user-agent": safariUA } }));
+		assert.equal(page.status, 403, "even the sign-in page");
+		assert.equal(proxy(new NextRequest(origin + "/api/chats", { headers: { "user-agent": safariUA } })).status, 403);
+		assert.equal(proxy(new NextRequest(origin + "/login", { headers: { "user-agent": iosUA } })).headers.get("x-middleware-next"), "1");
+		assert.equal(proxy(new NextRequest(origin + "/api/chats", { headers: { "user-agent": desktopUA } })).status, 401, "apps still sign in");
 	});
 });

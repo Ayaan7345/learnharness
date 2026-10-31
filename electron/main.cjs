@@ -31,7 +31,7 @@ const { createSubscriptions, loadSubscriptionSDK } = require("./subscriptions.cj
 const { attachSubscriptionChild, subscriptionControl } = require("./subscription-ipc.cjs");
 const { desktopAPIHeaders } = require("./desktop-api.cjs");
 const { openWebSubscriptionBrowser } = require("./web-subscription-browser.cjs");
-const { normalizeServerUrl, insecureRemote, readServerChoice, writeServerChoice, probeServer } = require("./remote-server.cjs");
+const { APP_USER_AGENT_TOKEN, normalizeServerUrl, insecureRemote, readServerChoice, writeServerChoice, probeServer } = require("./remote-server.cjs");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
@@ -767,6 +767,9 @@ async function main() {
 	// spawn, no packaging, full HMR. The rest of this shell still applies
 	// (guards, menu, single instance).
 	const devUrl = process.env.LH_DEV_URL;
+	// Identify the app on every request (a self-hosted server in apps-only
+	// mode refuses anything else). Harmless for the local server.
+	session.defaultSession.setUserAgent(`${session.defaultSession.getUserAgent()} ${APP_USER_AGENT_TOKEN}`);
 	installConnectHandlers();
 	remoteServerUrl = devUrl ? null : (() => {
 		const choice = readServerChoice(SERVER_FILE());

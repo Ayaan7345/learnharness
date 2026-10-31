@@ -38,6 +38,15 @@ test("server choice round-trips and falls back to local", () => {
 	fs.rmSync(dir, { recursive: true });
 });
 
+test("probe identifies itself as the desktop app (apps-only servers)", async () => {
+	let sent = "";
+	await probeServer("http://s:3000", async (_url: string, init: RequestInit) => {
+		sent = new Headers(init.headers).get("user-agent") ?? "";
+		return new Response('action="/api/auth/login"', { status: 200 });
+	});
+	assert.match(sent, /LearnHarnessDesktop\/\d/);
+});
+
 test("probe accepts only a LearnHarness sign-in page", async () => {
 	const page = (status: number, body: string) => async () => new Response(body, { status });
 	assert.deepEqual(await probeServer("http://s:3000", page(200, '<form method="post" action="/api/auth/login">')), { ok: true });

@@ -62,6 +62,13 @@ A native iPhone app lives in `ios/`. Build and install it with Xcode:
 Sign a device out with `POST /api/auth/logout`. Sign **every** device out by
 rotating `LH_SESSION_SECRET` (or the password, if no secret is set).
 
+**Apps only.** `LH_APPS_ONLY=1` makes the server refuse everything except
+the LearnHarness desktop and iPhone apps — a browser gets "This server only
+works in the LearnHarness apps", even with the password. The apps add
+`LearnHarnessDesktop/<version>` or `LearnHarnessiOS/<version>` to their
+User-Agent. That tag is not a secret (it can be faked), so the password is
+still what protects the server. Requests with `LH_API_TOKEN` are exempt.
+
 Setting, changing or looking up the password, step by step:
 [server-password.md](server-password.md).
 

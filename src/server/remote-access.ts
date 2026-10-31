@@ -63,12 +63,48 @@ function cookieValue(headers: Headers, name: string): string | undefined {
 	return undefined;
 }
 
+/** True when the request carries the configured API token (scripts, non-browser clients). */
+export function bearerAuthorized(headers: Headers, env: Env = process.env): boolean {
+	const bearer = headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+	return !!bearer && !!env.LH_API_TOKEN && env.LH_API_TOKEN.length >= 32 && sameSecret(bearer, env.LH_API_TOKEN);
+}
+
 /** True when server mode is off, or the request carries a valid session or API token. */
 export function remoteRequestAuthorized(headers: Headers, env: Env = process.env, now = Date.now()): boolean {
 	if (!serverModeEnabled(env)) return true;
 	if (sessionTokenValid(cookieValue(headers, SESSION_COOKIE), env, now)) return true;
-	const bearer = headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
-	return !!bearer && !!env.LH_API_TOKEN && env.LH_API_TOKEN.length >= 32 && sameSecret(bearer, env.LH_API_TOKEN);
+	return bearerAuthorized(headers, env);
+}
+
+// ─── Apps only ────────────────────────────────────────────────────────────
+// LH_APPS_ONLY=1 (with server mode on): only the LearnHarness desktop and
+// iPhone apps may use the server — they append "LearnHarnessDesktop/<v>" or
+// "LearnHarnessiOS/<v>" to every request's User-Agent. This keeps ordinary
+// browsers out entirely; it is NOT a secret (a User-Agent can be faked), so
+// the password stays the real protection. API-token clients are exempt.
+
+const APP_USER_AGENT = /\bLearnHarness(Desktop|iOS)\/\d/;
+
+export function appsOnlyEnabled(env: Env = process.env): boolean {
+	return serverModeEnabled(env) && env.LH_APPS_ONLY === "1";
+}
+
+export function fromLearnHarnessApp(headers: Headers): boolean {
+	return APP_USER_AGENT.test(headers.get("user-agent") ?? "");
+}
+
+/** True when the request may reach the server at all (sign-in still applies after). */
+export function appsOnlyAllowed(headers: Headers, env: Env = process.env): boolean {
+	return !appsOnlyEnabled(env) || fromLearnHarnessApp(headers) || bearerAuthorized(headers, env);
+}
+
+export function appsOnlyRefusal(api: boolean): Response {
+	const message = "This LearnHarness server only works in the LearnHarness desktop and iPhone apps.";
+	if (api) return Response.json({ error: message }, { status: 403, headers: { "Cache-Control": "no-store" } });
+	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LearnHarness</title>
+<style>:root{color-scheme:dark}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#141414;color:#e5e5e5;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:16px;text-align:center}</style>
+</head><body><p>${message}</p></body></html>`;
+	return new Response(html, { status: 403, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
 /** Paths reachable without signing in (the login flow itself). */

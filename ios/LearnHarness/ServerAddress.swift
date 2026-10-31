@@ -4,6 +4,10 @@ import Foundation
 /// desktop app's rules (electron/remote-server.cjs) so both clients accept
 /// and warn about the same addresses.
 enum ServerAddress {
+	/// Appended to every request's User-Agent (web view and probe) so a server
+	/// in apps-only mode (LH_APPS_ONLY) lets this app in.
+	static let appUserAgentToken = "LearnHarnessiOS/1.0"
+
 	/// Home-network and Tailscale names that never resolve on the public internet.
 	static let privateSuffixes = [".local", ".lan", ".home", ".internal", ".home.arpa", ".ts.net"]
 
@@ -62,6 +66,7 @@ enum ServerAddress {
 	static func probe(_ server: URL, session: URLSession = .shared) async -> String? {
 		var request = URLRequest(url: server.appending(path: "login"), timeoutInterval: 8)
 		request.cachePolicy = .reloadIgnoringLocalCacheData
+		request.setValue("LearnHarness \(appUserAgentToken)", forHTTPHeaderField: "User-Agent")
 		do {
 			let (data, response) = try await session.data(for: request)
 			let status = (response as? HTTPURLResponse)?.statusCode ?? 0

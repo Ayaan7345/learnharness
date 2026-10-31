@@ -30,8 +30,8 @@ final class WebViewModel: NSObject {
 		config.allowsInlineMediaPlayback = true
 		config.mediaTypesRequiringUserActionForPlayback = []
 		// Keep the mobile Safari tokens so the web app sees a phone; the suffix
-		// lets the server tell this app apart from a browser later.
-		config.applicationNameForUserAgent = "Mobile/15E148 LearnHarnessiOS/1.0"
+		// identifies this app (apps-only servers refuse anything else).
+		config.applicationNameForUserAgent = "Mobile/15E148 \(ServerAddress.appUserAgentToken)"
 		config.userContentController.addUserScript(WKUserScript(source: Self.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
 
 		let webView = WKWebView(frame: .zero, configuration: config)
