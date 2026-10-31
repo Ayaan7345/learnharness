@@ -44,6 +44,11 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 \
 The DMG lands in `dist/`. Auto-updates check this fork's GitHub releases
 (`electron-builder.yml` → `publish`), so upstream releases never replace it.
 
+## iPhone app
+
+A native iPhone app lives in `ios/`. Build and install it with Xcode:
+[ios.md](ios.md).
+
 ## Server mode
 
 `LH_SERVER_PASSWORD` turns server mode on. With it set:
