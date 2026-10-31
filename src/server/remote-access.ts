@@ -175,7 +175,10 @@ h1{font-size:18px;font-weight:600;margin:0 0 8px}
 input,button{font:inherit;padding:10px 12px;border-radius:8px;border:1px solid #2c2c31;background:#141417;color:inherit}
 button{background:#e8e8ea;color:#0b0b0c;border-color:#e8e8ea;cursor:pointer;font-weight:600}
 .err{color:#ff8a80;margin:0}
+/* Desktop app window: its hidden title bar needs a drag strip (no-op in browsers). */
+.drag{position:fixed;inset:0 0 auto 0;height:40px;-webkit-app-region:drag}
 </style></head><body>
+<div class="drag"></div>
 <form method="post" action="/api/auth/login">
 <h1>LearnHarness</h1>
 ${error ? `<p class="err">${error}</p>` : ""}

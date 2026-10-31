@@ -17,6 +17,33 @@ docker compose up -d --build
 Open `http://<server>:3000`, sign in with the password, then add your
 provider key and models in Settings as usual.
 
+## Desktop app (macOS DMG)
+
+The desktop app can open your server instead of running its own:
+**LearnHarness menu → Connect to Server…**, enter the address (for example
+`http://my-server:3000` or your Tailscale name), and press Connect. The app
+checks it is a LearnHarness server, restarts, and shows the sign-in page.
+You stay signed in for 30 days.
+
+- **LearnHarness → Use This Mac Instead** switches back to the bundled local
+  server and your local data (it is untouched while connected).
+- **LearnHarness → Sign Out of Server** clears this Mac's session.
+- If the server can't be reached at launch, the app offers Try Again,
+  Change Server…, or Use This Mac.
+- The choice is stored in `~/Library/Application Support/LearnHarness/server.json`.
+- Subscription sign-in (ChatGPT/Copilot) only works in local mode.
+
+Build an unsigned DMG for your own Mac (no Apple developer account needed):
+
+```bash
+npm ci && npx next build && node scripts/build-server.mjs
+CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 \
+  -c.mac.identity=- -c.mac.notarize=false -c.mac.hardenedRuntime=false --publish never
+```
+
+The DMG lands in `dist/`. Auto-updates check this fork's GitHub releases
+(`electron-builder.yml` → `publish`), so upstream releases never replace it.
+
 ## Server mode
 
 `LH_SERVER_PASSWORD` turns server mode on. With it set:

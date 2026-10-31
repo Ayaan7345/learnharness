@@ -188,7 +188,9 @@ publish:
   # would be a leak. desktop:dist passes no --publish flag, so builds never
   # upload; publishing happens at release time (GH_TOKEN + --publish).
   - provider: github
-    owner: amosblomqvist
+    # Fork (self-hosting build): updates come from this fork's releases, so
+    # an upstream release can never replace the server-connect build.
+    owner: Ayaan7345
     repo: learnharness
     # All three CI jobs contribute assets; only the owner publishes it.
     releaseType: draft
