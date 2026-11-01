@@ -646,7 +646,20 @@ export class SessionModel {
 	 */
 	async send(input: ChatInput, onAccepted?: () => void, questionKey?: string): Promise<boolean> {
 		const recovering = this.statusValue === "error";
-		if (!this.readyRef && !recovering) return false;
+		// A probe/teach question is on screen as soon as its call lands, which
+		// is before the posing turn's view reaches [DONE] (status is still
+		// submitted/streaming, readyRef is false). Returning here dropped the
+		// answer on the floor: no POST, no error, the dock stayed put. That
+		// is the fast path — pick an option, leave "Why this answer?" blank,
+		// hit Submit — and it looks like a blank why blocked progress. The
+		// thinking field is optional (it is omitted when empty); the answer
+		// must go out. A second click while that answer's own POST is in
+		// flight still drops: unconfirmedAnswers is set before the first
+		// await, and the server's 409 retry covers the posing turn still
+		// winding down. Text and other inputs keep the one-turn gate.
+		const answerDuringOpenView =
+			input.type === "answer" && !recovering && !this.readyRef && this.unconfirmedAnswers.size === 0;
+		if (!this.readyRef && !recovering && !answerDuringOpenView) return false;
 		const subject = input.type === "answer" ? pendingQuestionOf([...this.base, ...this.tail]) : null;
 		// A render-scoped answer must not move to another occurrence sharing
 		// its id. This identity is local only; the server's wire is unchanged.

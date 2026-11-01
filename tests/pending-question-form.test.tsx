@@ -8,7 +8,7 @@ import { QuestionDock } from "../components/question-dock.tsx";
 import { SessionModel } from "../components/session-core.ts";
 import { findPendingToolCall } from "../src/core/pending.ts";
 import { pendingQuestionOf, type LhMessage } from "../src/core/native-messages.ts";
-import type { QuizToolInput } from "../src/core/question-core.ts";
+import type { QuestionAnswerData, QuizToolInput } from "../src/core/question-core.ts";
 
 const dom = parseHTML("<html><body></body></html>");
 Object.assign(globalThis, {
@@ -128,5 +128,35 @@ test("saving a unique live question preserves its mounted form and selection", a
 		await render([saved]);
 		assert.equal(host.querySelector('[data-testid="question-dock"]'), form);
 		assert.ok(host.querySelector('[role="radio"][aria-checked="true"]'));
+	} finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+test("a probe answer with a blank why still submits", async () => {
+	const host = document.createElement("div"); document.body.append(host);
+	const root = createRoot(host);
+	let submitted: QuestionAnswerData | undefined;
+	const probe = {
+		question: "Is two even?",
+		options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }],
+		correctAnswer: "yes",
+		explanation: "Two is divisible by two.",
+	};
+	try {
+		await act(async () => root.render(<QuestionDock
+			toolName="probe" toolCallId="probe-1" input={probe as QuizToolInput}
+			expanded onExpand={() => {}} onSubmit={(answer) => { submitted = answer; }} dictationClaim={false} />));
+		await act(async () => { host.querySelector<HTMLButtonElement>('[role="radio"]')!.click(); });
+		const submit = [...host.querySelectorAll("button")].find((button) => button.textContent === "Submit answer")!;
+		assert.equal((submit as HTMLButtonElement).disabled, false, "a blank why must not disable Submit");
+		const editor = host.querySelector<HTMLElement>('[data-testid="thinking-field"] [data-file-path-input]')!;
+		assert.equal(editor.textContent, "", "the why field starts blank");
+		await act(async () => {
+			host.querySelector("form")!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+		});
+		assert.ok(submitted, "Submit answer with a blank why still leaves the question");
+		assert.equal(submitted!.thinking, undefined, "blank why is omitted, not required");
+		assert.equal(submitted!.kind, "quiz");
+		assert.equal(submitted!.tool, "probe");
+		assert.ok(submitted!.answers.length > 0);
 	} finally { await act(async () => root.unmount()); host.remove(); }
 });

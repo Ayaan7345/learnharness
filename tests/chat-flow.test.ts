@@ -386,6 +386,58 @@ describe("teacher chat flow (scripted model)", () => {
 		await drain(ok);
 	});
 
+	it("saves a blank-why probe answer from the stuck CCNA question and logs the receipt", async () => {
+		// The self-hosted CCNA session ends on this unanswered probe. Eighteen
+		// earlier probe answers were stored with no thinking text, so a blank
+		// why is not a server rejection — the answer has to be saved and the
+		// question must stop being pending. The log line is what docker logs
+		// were missing.
+		const chat = createConfiguredChat("Test: blank why probe");
+		createdChats.push(chat.id);
+		const callId = "call-bee547b5-7d58-43c9-a14a-c1c6c370be2a-29";
+		const probe = {
+			question: "Why does CCNA treat SSH as preferable to Telnet for managing a router?",
+			options: [
+				{ label: "SSH encrypts the session; Telnet sends the login in cleartext", value: "encrypt" },
+				{ label: "SSH uses UDP, while Telnet uses TCP", value: "udp" },
+				{ label: "Telnet is a Layer 3 protocol and SSH is Layer 2", value: "layers" },
+				{ label: "SSH does not require authentication", value: "noauth" },
+			],
+			explanation: "Telnet carries the session in cleartext. SSH encrypts it.\"",
+			correctAnswer: "encrypt",
+		};
+		chatStore.saveMessages(chat.id, [
+			{ id: "u", role: "user", content: "I want to learn the CCNA", timestamp: 1 },
+			{
+				id: "a", role: "assistant", stopReason: "toolUse", timestamp: 2,
+				api: "openai-completions", provider: "openrouter", model: "fixture",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				content: [{ type: "toolCall", id: callId, name: "probe", arguments: probe }],
+			},
+		] as never);
+		const answer = buildAnswer({
+			id: callId, kind: "quiz", question: probe.question, mode: "single-select",
+			options: probe.options, correctIndices: [1], explanation: probe.explanation, createdAt: "2026-11-01T06:53:10.000Z",
+		}, { values: ["encrypt"], confidence: 50 });
+		assert.equal(answer.thinking, undefined);
+		const lines: string[] = [];
+		const orig = console.info;
+		console.info = (...args: unknown[]) => { lines.push(args.map(String).join(" ")); orig.apply(console, args as []); };
+		try {
+			const { engine } = scriptedTeacher(() => [() => fauxAssistantMessage([fauxText("SSH encrypts the session.")])]);
+			await drainTurn(post(chat.id, { type: "answer", toolCallId: callId, answer: { ...answer, tool: "probe" } }), agentFactory(engine));
+		} finally {
+			console.info = orig;
+		}
+		const saved = chatStore.getChat(chat.id)!;
+		assert.equal(danglingQuestionOf(saved.messages), null, "the probe is no longer waiting");
+		const receipt = lines.find((line) => line.includes("answer submission") && line.includes(callId));
+		assert.ok(receipt, "docker logs record the submission");
+		assert.match(receipt!, /tool=probe/);
+		assert.match(receipt!, /thinking=absent/);
+		assert.match(receipt!, /outcome=saved/);
+	});
+
 	it("streams the toolCall partial before tool_execution_start/end (protocol pin for the 'Writing a question…' shimmer)", async () => {
 		// Wave D: the wire is VERBATIM pi AgentEvents. The client's writing
 		// indicator derives 'input-streaming' from a toolCall block seen in a

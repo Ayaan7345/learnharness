@@ -361,6 +361,87 @@ describe("send (one input event, verbatim consumption)", () => {
 		});
 	});
 
+	it("posts a probe answer with a blank why while the posing turn's view is still open", async () => {
+		// Plain-http pages have no crypto.randomUUID. Minting must not throw
+		// before the POST, and a still-open posing view must not swallow the
+		// answer — that silent drop is what left the dock sitting on the
+		// same question.
+		const original = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+		Object.defineProperty(globalThis.crypto, "randomUUID", { value: undefined, configurable: true });
+		const enc = new TextEncoder();
+		const probeArgs = {
+			question: "Is two even?",
+			options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }],
+			correctAnswer: "yes",
+			explanation: "Two is divisible by two.",
+		};
+		let posts = 0;
+		let answerBody = "";
+		const m = model({ fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (url === "/api/chats/chat_x/stream" && posts === 0) {
+				return new Response(new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(enc.encode(sse({
+							type: "message_start",
+							message: { role: "assistant", content: [{ type: "toolCall", id: "q1", name: "probe", arguments: probeArgs }] },
+						})));
+						controller.enqueue(enc.encode(sse({
+							type: "tool_execution_end",
+							toolCallId: "q1",
+							toolName: "probe",
+							isError: false,
+							result: { content: [{ type: "text", text: "Question posed" }], details: null },
+						})));
+						init?.signal?.addEventListener("abort", () => {
+							try { controller.error(new DOMException("Aborted", "AbortError")); } catch { /* already closed */ }
+						});
+					},
+				}));
+			}
+			if (url === "/api/chat") {
+				posts++;
+				answerBody = typeof init?.body === "string" ? init.body : "";
+				return Response.json({ ok: true });
+			}
+			if (url === "/api/chats/chat_x") return Response.json({ messages: [] });
+			if (url === "/api/chats/chat_x/stream") return sseResponse({ type: "turn-settled" }, "[DONE]");
+			if (url.startsWith("/api/jobs")) return Response.json({ turnInFlight: false });
+			throw new Error(`unexpected fetch: ${url}`);
+		}) as typeof globalThis.fetch });
+		try {
+			const viewing = m.resumeStream(false);
+			for (let i = 0; i < 20 && m.getState().status !== "streaming"; i++) {
+				await new Promise((r) => setTimeout(r, 0));
+			}
+			assert.equal(m.getState().status, "streaming", "the question is up before the posing view settles");
+			const pending = pendingQuestionOf(m.getState().nativeMessages);
+			assert.equal(pending?.tool, "probe");
+			const answer = buildAnswer({
+				id: "q1", kind: "quiz", question: probeArgs.question, mode: "single-select",
+				options: [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }],
+				correctIndices: [1], explanation: probeArgs.explanation, createdAt: "fixture",
+			}, { values: ["yes"], confidence: 50 });
+			assert.equal(answer.thinking, undefined);
+			const first = m.submitAnswer("probe", "q1", answer, pending!.key);
+			const part = m.getState().messages.flatMap((v) => v.parts).find((p) => p.type === "tool-probe");
+			assert.equal(part?.state, "output-available", "the dock leaves the question as soon as the answer is submitted");
+			assert.equal(pendingQuestionOf(m.getState().nativeMessages), null);
+			await m.submitAnswer("probe", "q1", answer, pending!.key);
+			assert.equal(posts, 1, "a second click does not send the answer again");
+			const body = JSON.parse(answerBody) as { input: { type: string; answer: { thinking?: string; answers: unknown[] } } };
+			assert.equal(body.input.type, "answer");
+			assert.equal(body.input.answer.thinking, undefined);
+			assert.equal("thinking" in body.input.answer, false, "a blank why is not sent");
+			assert.ok(body.input.answer.answers.length > 0);
+			await first;
+			await viewing;
+		} finally {
+			if (original) Object.defineProperty(globalThis.crypto, "randomUUID", original);
+			else delete (globalThis.crypto as { randomUUID?: unknown }).randomUUID;
+		}
+	});
+
 	it("ignores the question placeholder's clean execution end (fork 2) and keeps errors", async () => {
 		// The dock's mount gate keys on the part STATE the live execution
 		// layer drives MID-STREAM: a clean question execution stays
