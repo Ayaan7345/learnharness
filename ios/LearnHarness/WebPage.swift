@@ -123,9 +123,14 @@ final class WebPage: NSObject {
 		window.fetch = async (input, init) => {
 			const url = typeof input === "string" ? input : input.url;
 			const method = (init && init.method) || "GET";
+			// API writes are traced start → finish, so one that never settles
+			// shows up as a start with no matching finish.
+			const traced = String(url).includes("/api/") && String(method).toUpperCase() !== "GET";
+			const started = Date.now();
+			if (traced) post("→ " + method + " " + url);
 			try {
 				const res = await realFetch(input, init);
-				if (!res.ok) post("fetch " + method + " " + url + " → " + res.status);
+				if (!res.ok || traced) post("← " + method + " " + url + " " + res.status + " in " + (Date.now() - started) + "ms");
 				return res;
 			} catch (err) {
 				post("fetch " + method + " " + url + " FAILED " + err);
@@ -155,6 +160,7 @@ final class WebPage: NSObject {
 			const native = method !== "GET" && method !== "HEAD" && url.origin === location.origin &&
 				url.pathname.startsWith("/api/") && (body === undefined || body === null || typeof body === "string");
 			if (!native) return pageFetch(input, init);
+			try { window.webkit.messageHandlers.lhNative.postMessage({ type: "log", text: "⇢ native " + method + " " + url.pathname }); } catch {}
 			const headers = {};
 			new Headers((init && init.headers) || (request && request.headers) || {}).forEach((value, key) => { headers[key] = value; });
 			const reply = await handler.postMessage({ path: url.pathname + url.search, method, headers, body: body ?? null });
@@ -198,6 +204,8 @@ enum PageDiagnostics {
 	static func record(_ line: String) {
 		let stamped = "\(Date().formatted(date: .omitted, time: .standard)) \(line)"
 		pageLog.notice("\(stamped, privacy: .public)")
+		// Also on stdout, which `devicectl device process launch --console` streams.
+		print("[page] \(stamped)")
 		recent.append(stamped)
 		if recent.count > 40 { recent.removeFirst(recent.count - 40) }
 	}
@@ -219,10 +227,13 @@ private final class NativeTransport: NSObject, WKScriptMessageHandlerWithReply {
 			request.setValue(value, forHTTPHeaderField: key)
 		}
 		if let body = call["body"] as? String { request.httpBody = Data(body.utf8) }
+		let started = Date()
+		PageDiagnostics.record("native → \(method) \(path)")
 		do {
 			let (data, response) = try await api.raw(request)
 			let status = response.statusCode
-			if status >= 400 { PageDiagnostics.record("\(method) \(path) → \(status) \(ServerAPI.errorText(data) ?? "")") }
+			let ms = Int(Date().timeIntervalSince(started) * 1000)
+			PageDiagnostics.record("native ← \(method) \(path) \(status) in \(ms)ms \(status >= 400 ? ServerAPI.errorText(data) ?? "" : "")")
 			return ([
 				"status": status,
 				"body": String(decoding: data, as: UTF8.self),
