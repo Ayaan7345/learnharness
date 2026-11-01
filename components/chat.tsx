@@ -30,7 +30,7 @@ import { dockStateKey } from "@/components/dock-state-key";
 import { clearOpeningPrompt, readOpeningPromptEntry, stashOpeningPrompt, OPENING_PROMPT_FAILURE } from "@/components/opening-prompt";
 import { forwardDockWheel, useDockHeight } from "@/components/dock-height";
 import { QueuedSteersBody, type QueuedSteerLine } from "@/components/queued-steers";
-import { DictationBar, finishDictation, joinDictation, useDictation } from "@/components/dictation";
+import { appendToPrimaryInput, DictationBar, finishDictation, joinDictation, useDictation } from "@/components/dictation";
 import { useFieldCycle } from "@/components/field-cycle";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
@@ -938,6 +938,9 @@ export function Chat({
 			stop: abortInFlightTurn,
 			openPlan: () => setPlanOpen(true),
 			find: () => window.dispatchEvent(new Event(kbdEventForChat("find"))),
+			// The app's mic under a question or practice dock: the transcript
+			// lands where desktop dictation would (the dock's claimed field).
+			dictate: (text: string) => appendToPrimaryInput(text),
 		};
 		return () => {
 			window.lhNativeChat = undefined;

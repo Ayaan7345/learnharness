@@ -2,6 +2,7 @@ import XCTest
 @testable import LearnHarness
 
 final class DictationTests: XCTestCase {
+	@MainActor
 	func testJoinKeepsWhatWasAlreadyTyped() {
 		XCTAssertEqual(Dictation.join("", "IPv6"), "IPv6")
 		XCTAssertEqual(Dictation.join("   ", "IPv6"), "IPv6")

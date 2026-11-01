@@ -19,7 +19,7 @@ declare global {
 	interface Window {
 		webkit?: { messageHandlers?: { lhNative?: { postMessage(message: unknown): void } } };
 		/** Installed by the chat page while it is mounted inside the native shell. */
-		lhNativeChat?: { stop(): void; openPlan(): void; find(): void };
+		lhNativeChat?: { stop(): void; openPlan(): void; find(): void; dictate(text: string): boolean };
 		/** A settings section the app asked for before the dialog provider mounted. */
 		lhNativePendingSettings?: string;
 	}

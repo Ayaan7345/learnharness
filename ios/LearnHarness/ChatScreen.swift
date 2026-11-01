@@ -41,7 +41,9 @@ struct ChatScreen: View {
 		Group {
 			if let page { WebPageView(page: page) } else { Theme.background }
 		}
-		.ignoresSafeArea(.container, edges: .bottom)
+		// Under a dock the page must end above the mic bar: the dock's
+		// Submit sits at the page's bottom edge, not in its scroll content.
+		.ignoresSafeArea(.container, edges: state.composer ? .bottom : [])
 		.safeAreaInset(edge: .bottom, spacing: 0) {
 			if state.composer {
 				ComposerBar(
@@ -56,6 +58,8 @@ struct ChatScreen: View {
 					onNext: next,
 					onDismissError: { sendError = nil }
 				)
+			} else if let page {
+				DockDictationBar(page: page)
 			}
 		}
 		.navigationBarTitleDisplayMode(.inline)
@@ -367,6 +371,99 @@ struct ComposerBar: View {
 			.padding(.bottom, 3)
 			.disabled(!hasText || !canSend || sending)
 			.accessibilityLabel(busy ? "Steer" : "Send")
+		}
+	}
+}
+
+/// The mic while a question or practice dock replaces the composer. The
+/// transcript goes to the dock's own field, as desktop dictation does
+/// (window.lhNativeChat.dictate, components/chat.tsx).
+struct DockDictationBar: View {
+	let page: WebPage
+	@Environment(AppModel.self) private var model
+
+	@State private var dictation = Dictation()
+	/// The latest transcript, handed to the page once the recording has
+	/// ended and it stops changing: Apple's fallback writes partial results
+	/// while it listens and its last words can land after the stop.
+	@State private var transcript = ""
+	@State private var delivery: Task<Void, Never>?
+
+	private var prompt: String {
+		switch dictation.phase {
+		case .recording: "Recording… tap to stop"
+		case .transcribing: "Transcribing…"
+		case .idle: "Tap to dictate"
+		}
+	}
+
+	var body: some View {
+		VStack(spacing: 8) {
+			if let message = dictation.error {
+				HStack(alignment: .top) {
+					Image(systemName: "exclamationmark.triangle.fill")
+					Text(message).frame(maxWidth: .infinity, alignment: .leading)
+					Button { dictation.dismissError() } label: { Image(systemName: "xmark") }
+						.accessibilityLabel("Dismiss")
+				}
+				.font(Theme.ui(12))
+				.foregroundStyle(Theme.warning)
+				.padding(10)
+				.lhCard(radius: 10)
+			}
+			Button {
+				Task {
+					await dictation.toggle(api: model.api, read: { "" }, write: {
+						transcript = $0
+						scheduleDelivery()
+					})
+				}
+			} label: {
+				HStack(spacing: 4) {
+					Group {
+						if dictation.phase == .transcribing {
+							ProgressView().controlSize(.small)
+						} else {
+							Image(systemName: dictation.phase == .recording ? "stop.circle.fill" : "mic")
+								.font(.system(size: 18, weight: .medium))
+								.foregroundStyle(dictation.phase == .recording ? Theme.destructive : Theme.muted)
+								.symbolEffect(.pulse, isActive: dictation.phase == .recording)
+						}
+					}
+					.frame(width: 36, height: 36)
+					Text(prompt)
+						.font(Theme.ui(15))
+						.foregroundStyle(Theme.muted)
+						.frame(maxWidth: .infinity, alignment: .leading)
+				}
+				.padding(.horizontal, 6)
+				.padding(.vertical, 2)
+				.contentShape(Rectangle())
+			}
+			.buttonStyle(.plain)
+			.disabled(dictation.phase == .transcribing)
+			.lhCard(radius: 18)
+			.accessibilityLabel(dictation.phase == .recording ? "Stop dictation" : "Dictate")
+		}
+		.padding(.horizontal, 12)
+		.padding(.top, 8)
+		.padding(.bottom, 8)
+		.background(Theme.background)
+		.onChange(of: dictation.phase) { _, phase in
+			if phase == .idle { scheduleDelivery() }
+		}
+		.onDisappear { dictation.cancel() }
+	}
+
+	private func scheduleDelivery() {
+		delivery?.cancel()
+		delivery = Task {
+			try? await Task.sleep(nanoseconds: 600_000_000)
+			guard !Task.isCancelled, dictation.phase == .idle, !transcript.isEmpty else { return }
+			let text = transcript
+			transcript = ""
+			guard let data = try? JSONEncoder().encode(text), let literal = String(data: data, encoding: .utf8) else { return }
+			page.run("window.lhNativeChat?.dictate(\(literal))")
 		}
 	}
 }
