@@ -57,6 +57,7 @@ import {
 	inputAppends,
 	parseChatInput,
 	retryDrops,
+	type ChatInput,
 	type TurnInput,
 } from "../core/input-events.ts";
 import { steerDelivered } from "../core/contracts.ts";
@@ -154,6 +155,18 @@ function resolveEngine(role: ModelRole): PiEngine | undefined {
 
 setJobRespawn((jobId) => void jobRunner.runJob(jobId));
 
+/** One line for docker logs. The learner's thinking text stays out of the
+ *  log — only whether the "why" field was blank — so a self-hosted server
+ *  shows that a probe answer arrived, was saved, or was refused. A client
+ *  that drops the submit before the POST leaves no line at all. */
+function logAnswerSubmission(chatId: string, input: Extract<ChatInput, { type: "answer" }>, outcome: string, tool?: string): void {
+	const answer = input.answer;
+	const thinking = typeof answer?.thinking === "string" && answer.thinking.trim().length > 0 ? "present" : "absent";
+	const name = tool ?? answer?.tool ?? answer?.kind ?? "?";
+	const answers = Array.isArray(answer?.answers) ? answer.answers.length : 0;
+	console.info(`[chat ${chatId}] answer submission tool=${name} call=${input.toolCallId} thinking=${thinking} dontKnow=${answer?.dontKnow === true} answers=${answers} outcome=${outcome}`);
+}
+
 /** The route-facing entry: parse {chatId, input} and run one turn. */
 export async function handleChatRequest(
 	req: Request,
@@ -172,6 +185,10 @@ export async function handleChatRequest(
 		input = parseChatInput(body.input);
 	} catch (err) {
 		if (err instanceof ChatInputError) {
+			const raw = body.input;
+			if (typeof raw === "object" && raw !== null && (raw as { type?: unknown }).type === "answer") {
+				logAnswerSubmission(chatId, raw as Extract<ChatInput, { type: "answer" }>, `rejected: ${err.message}`);
+			}
 			return Response.json({ error: err.message }, { status: 400 });
 		}
 		throw err;
@@ -191,6 +208,7 @@ export async function handleChatInput(
 ): Promise<Response> {
 	let record = stores.chatStore.getChat(chatId);
 	if (!record) {
+		if (input.type === "answer") logAnswerSubmission(chatId, input, "rejected: unknown chat");
 		return Response.json({ error: "Unknown chat" }, { status: 404 });
 	}
 
@@ -308,6 +326,7 @@ export async function handleChatInput(
 				: inputAppends(record, input);
 	} catch (err) {
 		if (err instanceof ChatInputError) {
+			if (input.type === "answer") logAnswerSubmission(chatId, input, `rejected: ${err.message}`);
 			return Response.json({ error: err.message }, { status: 400 });
 		}
 		throw err;
@@ -328,8 +347,10 @@ export async function handleChatInput(
 		try { stores.chatStore.saveMessages(chatId, merged); }
 		catch (err) {
 			console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+			logAnswerSubmission(chatId, input, "rejected: could not save", appends[0]?.role === "toolResult" ? appends[0].toolName : undefined);
 			return new Response("Your input could not be saved. Please try again.", { status: 500 });
 		}
+		logAnswerSubmission(chatId, input, "saved, reaction deferred (another question is still open)", appends[0]?.role === "toolResult" ? appends[0].toolName : undefined);
 		emit("record-changed", { chatId });
 		return settledTurnResponse(); // the cheap terminal — no beginTurn, no turn
 	}
@@ -339,6 +360,7 @@ export async function handleChatInput(
 	// double-run the teacher and clobber the first turn's persist.
 	if (!beginTurn(chatId)) {
 		console.info(`[chat ${chatId}] turn already in flight — request rejected`);
+		if (input.type === "answer") logAnswerSubmission(chatId, input, "rejected: turn already running");
 		return Response.json({ error: "A turn is already running for this session" }, { status: 409 });
 	}
 
@@ -360,8 +382,12 @@ export async function handleChatInput(
 		if (!stagedAutomatic) stores.chatStore.saveMessages(chatId, merged);
 	} catch (err) {
 		console.error(`[chat ${chatId}] write-ahead persist failed:`, err);
+		if (input.type === "answer") logAnswerSubmission(chatId, input, "rejected: could not save");
 		endTurn(chatId);
 		return new Response("Your input could not be saved. Please try again.", { status: 500 });
+	}
+	if (input.type === "answer" && !stagedAutomatic) {
+		logAnswerSubmission(chatId, input, "saved", appends[0]?.role === "toolResult" ? appends[0].toolName : undefined);
 	}
 	// Visibility bookkeeping is not the canonical save. Its failure must
 	// neither misreport a saved input as lost nor prevent the turn running.
