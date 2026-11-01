@@ -4,6 +4,7 @@ import { serverExecute } from "../tool-execute.ts";
 // The search-hit shape lives in the core port since the search wave
 // (2026-09-20); this alias keeps callers churn-free.
 import type { SearchHit as WebSearchResult, SearchProvider } from "../../core/search.ts";
+import { FirecrawlSearchUnsupportedError, type PageReader, type ScrapedPage } from "../../core/firecrawl.ts";
 export type { WebSearchResult };
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
@@ -16,11 +17,12 @@ import TurndownService from "turndown";
  *   web_search(query, count?) → {title, url, snippet}[]   (injected search port)
  *   web_fetch(url)            → readable markdown text     (Readability + Turndown,
  *                                                          Jina Reader fallback for
- *                                                          JS-rendered pages)
+ *                                                          JS-rendered pages, or the
+ *                                                          injected Firecrawl reader)
  *
  * SEARCH REWIRING (search port wave, 2026-09-20): the Google CSE backend is
  * retired — web_search now runs on the injected search port (core/search.ts).
- * The live adapter (Tavily/Brave — server/search.ts) arrives as a DEPENDENCY
+ * The live adapter (Tavily/Brave/Firecrawl — server/search.ts) arrives as a DEPENDENCY
  * (import law: this tool depends on the core port, never server code). NO
  * silent fallback (owner decision): provider absent → search is honestly
  * unavailable, and the composition root drops the research dispatch tool on
@@ -80,6 +82,15 @@ function htmlToMarkdown(html: string): { title: string; content: string } | null
 	return { title: article.title ?? "", content: markdown };
 }
 
+const PDF_POINTER = "web_fetch: this URL is a PDF document — call web_fetch_pdf on it to download and read it.";
+
+function formatScraped(page: ScrapedPage): string {
+	if ((page.contentType ?? "").toLowerCase().includes("pdf")) return PDF_POINTER;
+	const sourceLine = `Source: ${page.sourceUrl} (HTTP ${page.statusCode ?? 200})`;
+	const header = page.title ? `# ${page.title}\n\n${sourceLine}\n\n---\n\n` : `${sourceLine}\n\n---\n\n`;
+	return header + truncate(page.markdown);
+}
+
 async function fetchAndExtract(url: string): Promise<string> {
 	const resp = await fetch(url, {
 		headers: {
@@ -100,7 +111,7 @@ async function fetchAndExtract(url: string): Promise<string> {
 	if (contentType.includes("application/pdf")) {
 		// Pointer, not dead-end (researcher PDF wave, 2026-10-07): the
 		// researcher's web_fetch_pdf tool downloads + triages PDFs.
-		return `web_fetch: this URL is a PDF document — call web_fetch_pdf on it to download and read it.`;
+		return PDF_POINTER;
 	}
 	if (/image\/|audio\/|video\/|zip|octet-stream/.test(contentType)) {
 		throw new Error(`Unsupported content type: ${contentType.split(";")[0]}`);
@@ -135,7 +146,24 @@ const webFetchInput = Type.Object({
 	url: Type.String({ description: "The URL to fetch" }),
 });
 
-export function createWebTools(search: () => SearchProvider | null): Record<string, AgentTool<any>> {
+const WEB_FETCH_BUILTIN =
+	"Fetch a web page and extract its readable content as markdown (Readability). " +
+	"Handles HTML pages and plain text; JS-rendered pages fall back to a reader service.";
+
+const WEB_FETCH_FIRECRAWL =
+	"Fetch a web page through the configured Firecrawl server and return its content as markdown. " +
+	"PDF URLs are handed to web_fetch_pdf.";
+
+const FIRECRAWL_SEARCH_UNAVAILABLE =
+	"web_search is not available: this Firecrawl server has no search endpoint configured. " +
+	"Do not retry web_search. Use web_fetch for URLs you already have, or set a Tavily or Brave search API key.";
+
+export function createWebTools(
+	search: () => SearchProvider | null,
+	/** When this returns a reader, web_fetch uses it. Absent or null keeps the built-in reader. */
+	pageReader?: () => PageReader | null,
+): Record<string, AgentTool<any>> {
+	const usingFirecrawl = pageReader?.() != null;
 	return {
 		web_search: {
 			name: "web_search",
@@ -154,6 +182,7 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 				try {
 					return await provider.search(query, count ?? 5);
 				} catch (err) {
+					if (err instanceof FirecrawlSearchUnsupportedError) return FIRECRAWL_SEARCH_UNAVAILABLE;
 					return `web_search failed: ${err instanceof Error ? err.message : String(err)}`;
 				}
 			}),
@@ -162,11 +191,9 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 		web_fetch: {
 			name: "web_fetch",
 			label: "web_fetch",
-			description:
-				"Fetch a web page and extract its readable content as markdown (Readability). " +
-				"Handles HTML pages and plain text; JS-rendered pages fall back to a reader service.",
+			description: usingFirecrawl ? WEB_FETCH_FIRECRAWL : WEB_FETCH_BUILTIN,
 			parameters: webFetchInput,
-			execute: serverExecute("web_fetch", webFetchInput, async ({ url }): Promise<string> => {
+			execute: serverExecute("web_fetch", webFetchInput, async ({ url }, ctx): Promise<string> => {
 				try {
 					const parsed = new URL(url);
 					// URL.protocol carries a TRAILING COLON ("https:", WHATWG) — the
@@ -177,6 +204,15 @@ export function createWebTools(search: () => SearchProvider | null): Record<stri
 						throw new Error("Only http(s) URLs are supported");
 				} catch {
 					return `web_fetch failed: invalid URL "${url}"`;
+				}
+				const reader = pageReader?.() ?? null;
+				if (reader) {
+					if (/\.pdf$/i.test(new URL(url).pathname)) return PDF_POINTER;
+					try {
+						return formatScraped(await reader.scrape(url, ctx.signal));
+					} catch (err) {
+						return `web_fetch failed for ${url}: ${err instanceof Error ? err.message : String(err)}`;
+					}
 				}
 				try {
 					return await fetchAndExtract(url);

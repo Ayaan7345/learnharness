@@ -52,6 +52,7 @@ import {
 	maskKey,
 	validateKeyShape,
 } from "../core/auth-keys.ts";
+import { normalizeFirecrawlApiUrl } from "../core/firecrawl.ts";
 import { authStore } from "../store/auth.ts";
 import { isSubscriptionProvider, subscriptionConnected } from "../agent/subscription-connections.ts";
 import { customProviderAvailable, installCustomProviderSource } from "./custom-provider.ts";
@@ -158,13 +159,15 @@ export function resolveKeyStatuses(
 		// post fill-gap the file's values LIVE in env, so realEnv is what
 		// distinguishes a REAL env var from the store's own reflection).
 		const live = envValue !== undefined ? envValue : fileValue;
+		const info = AUTH_KEYS.find((k) => k.id === id) ?? null;
 		rows.push({
 			id,
-			info: AUTH_KEYS.find((k) => k.id === id) ?? null,
+			info,
 			present: live !== undefined,
 			// Custom keys may be one character: even a masked suffix can expose
 			// the entire credential. Preserve inventory, return no key characters.
-			masked: live !== undefined ? id === CUSTOM_PROVIDER.envVar ? "••••" : `${maskKey(live)} (${live.trim().length} chars)` : null,
+			// A non-secret catalog entry (the Firecrawl URL) is shown in full.
+			masked: live !== undefined ? id === CUSTOM_PROVIDER.envVar ? "••••" : info?.secret === false ? `${live.trim()} (${live.trim().length} chars)` : `${maskKey(live)} (${live.trim().length} chars)` : null,
 			source: isRealEnv ? "env" : live !== undefined ? "file" : "none",
 			shadowedByEnv: isRealEnv && fileValue !== undefined && envValue !== fileValue,
 		});
@@ -216,7 +219,8 @@ export function saveKey(id: string, value: string): { ok: true; status: AuthKeyS
 	if (id === CUSTOM_PROVIDER.envVar || id === CUSTOM_AUTH_BINDING) return { ok: false, error: "Use the custom endpoint editor" };
 	const shape = isProviderEnvVar(id) ? genericProviderKeyGuard(id, value) : validateKeyShape(id, value);
 	if (!shape.ok) return { ok: false, error: shape.error };
-	const trimmed = value.trim();
+	const trimmed = id === "FIRECRAWL_API_URL" ? normalizeFirecrawlApiUrl(value) : value.trim();
+	if (!trimmed) return { ok: false, error: `${id} must be an http(s) URL without a username, password, query, or fragment` };
 	authStore.setAuthVar(id, trimmed);
 	const record = boot();
 	if (!record.realEnv.has(id)) {

@@ -162,6 +162,9 @@ export function keyStatusLine(status: AuthKeyStatus): string {
 function KeyTableRow({
 	label,
 	docsUrl,
+	placeholder,
+	linkLabel = "key ↗",
+	fieldLabel,
 	status,
 	expanded,
 	onToggle,
@@ -173,6 +176,12 @@ function KeyTableRow({
 	label: string;
 	/** The "Get a key ↗" target — curated keys carry one. */
 	docsUrl?: string;
+	/** Paste-field placeholder. Default is the key prompt. */
+	placeholder?: string;
+	/** The tiny docs link. A URL row says "docs" rather than "key". */
+	linkLabel?: string;
+	/** Accessible name for the paste field. */
+	fieldLabel?: string;
 	status: AuthKeyStatus;
 	expanded: boolean;
 	onToggle: () => void;
@@ -214,8 +223,8 @@ function KeyTableRow({
 						onKeyDown={(e) => {
 							if (e.key === "Enter") void save();
 						}}
-						placeholder="Paste key…"
-						aria-label={`${label} key`}
+						placeholder={placeholder ?? "Paste key…"}
+						aria-label={fieldLabel ?? `${label} key`}
 						data-testid={`${testid}-input`}
 						disabled={busy}
 						autoFocus
@@ -281,7 +290,7 @@ function KeyTableRow({
 							onClick={(e) => e.stopPropagation()}
 							className="text-[10px] text-muted-foreground/60 underline-offset-2 hover:text-foreground hover:underline"
 						>
-							key ↗
+							{linkLabel}
 						</a>
 					)}
 					<span data-testid={`${testid}-status`} className="font-mono text-[11px] text-muted-foreground">
@@ -585,6 +594,9 @@ export function KeysSection({
 						key={status.id}
 						label={status.info?.label ?? status.id}
 						docsUrl={status.info?.docsUrl}
+						placeholder={status.info?.placeholder}
+						linkLabel={status.info?.secret === false ? "docs ↗" : "key ↗"}
+						fieldLabel={status.info?.secret === false ? (status.info?.label ?? status.id) : undefined}
 						status={status}
 						expanded={openRow === status.id}
 						onToggle={() => setOpenRow(openRow === status.id ? null : status.id)}

@@ -109,6 +109,35 @@ LH_SERVER_PASSWORD=... LH_DATA_DIR=/srv/learnharness LH_AUTH_FILE=/srv/learnharn
   HOSTNAME=0.0.0.0 PORT=3000 node .next/standalone/server.js
 ```
 
+## Firecrawl
+
+The research tool can read web pages through a [Firecrawl](https://github.com/firecrawl/firecrawl) server on your network. With nothing set, research keeps the built-in page reader.
+
+Firecrawl is configured the same way as Brave Search. `FIRECRAWL_API_URL` is the switch (Brave's switch is `BRAVE_API_KEY`). `FIRECRAWL_API_KEY` is optional. A real environment variable wins over a value saved in the app. Saved values live in `auth.json` and take effect without a restart. An environment variable is read at process start, so changing `.env.server` needs a container restart.
+
+In `.env.server` (this file is already passed in by `env_file`):
+
+```bash
+FIRECRAWL_API_URL=http://192.168.7.5:3002
+# FIRECRAWL_API_KEY=   # only if that Firecrawl instance requires a key
+```
+
+Or under the `learnharness` service in `docker-compose.yml`:
+
+```yaml
+environment:
+  FIRECRAWL_API_URL: http://192.168.7.5:3002
+```
+
+Use the Firecrawl machine's LAN address. On this host `host.docker.internal` does not resolve, and the LearnHarness container can reach `http://192.168.7.5:3002` directly. The URL is the server root, not a path ending in `/v1/scrape`. Leave the key unset when Firecrawl was started with `USE_DB_AUTHENTICATION=false`. For Firecrawl cloud, set the URL to `https://api.firecrawl.dev` and set the key.
+
+You can also set both under **Settings → Providers → Search**, next to Tavily and Brave. The URL row shows the full address. The key row is masked. In **Settings → Agent**, the search-engine menu lists Firecrawl beside Tavily and Brave.
+
+What the researcher does with it:
+
+- **Page reading.** Whenever the URL is set, `web_fetch` calls `POST /v1/scrape` with `{ url, formats: ["markdown"] }` and a 25 second timeout. Calls stay on the LearnHarness server. A PDF link still goes to the PDF reader.
+- **Search.** Firecrawl is used for `web_search` only when it is the active engine: automatically if no Tavily or Brave key is set, or when you pin Firecrawl in the search-engine menu. A Tavily or Brave key keeps search on that engine. If this Firecrawl has no SearxNG endpoint, page reading still works and `web_search` says search is not configured instead of failing the lesson. That answer is remembered for about 10 minutes (or until the server process restarts).
+
 ## Limits
 
 - One server process; the stores assume a single writer. Don't run replicas.

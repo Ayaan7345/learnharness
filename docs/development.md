@@ -48,6 +48,8 @@ Secrets and machine-specific paths only. Model choice and thinking budgets are t
 
 The packaged desktop app takes keys from `userData/auth.json` (BYOK, mode 0600, read/written directly by the server via `LH_AUTH_FILE`). PDFs render natively with pdfjs/Skia; SVGs use resvg.
 
+`FIRECRAWL_API_URL` (optional) points the researcher's page reader at a Firecrawl server. `FIRECRAWL_API_KEY` is optional and only needed when that server requires a key. Both are set like the other provider keys: environment, `.env.local`, or Settings → Providers → Search (saved in `auth.json`). See [self-hosting](self-hosting.md#firecrawl).
+
 ### Subscription connections in web/dev
 
 Ordinary `npm run dev` and `npm start` support the existing **ChatGPT, GitHub Copilot and Grok** connections in Settings → Providers. No separate launcher or change to Next's listening/LAN behavior is required. `npm run desktop:dev` uses these same dev-server connections; the packaged desktop app keeps its separate main-process credentials and private IPC transport.
@@ -125,7 +127,8 @@ src/
     tools/plan.ts               plan_init (author-once mermaid plan, deterministic parser)
     tools/probe.ts              probe_done (probe→teach handoff seam)
     tools/jobs.ts               research / demo / visual tool surfaces
-    tools/web.ts                web_search (Google CSE) + web_fetch (researcher only)
+    tools/web.ts                web_search (Tavily, Brave, or Firecrawl) + web_fetch
+                                (researcher only; Firecrawl scrape when FIRECRAWL_API_URL is set)
     subagents/                  researcher · demo-builder · visual-maker
                                 · pdf-reader,
                                 extraction pipeline (extractor/auditor + merger handoff),

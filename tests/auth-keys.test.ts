@@ -12,10 +12,10 @@ import { describe, it } from "node:test";
 import { AUTH_KEYS, genericProviderKeyGuard, isKnownAuthKey, maskKey, validateKeyShape } from "../src/core/auth-keys.ts";
 
 describe("the catalog", () => {
-	it("is exactly the three CURATED app-service keys (provider keys live in the provider table)", () => {
+	it("is the curated app-service keys (provider keys live in the provider table)", () => {
 		assert.deepEqual(
 			AUTH_KEYS.map((k) => k.id),
-			["DEEPGRAM_API_KEY", "TAVILY_API_KEY", "BRAVE_API_KEY"],
+			["DEEPGRAM_API_KEY", "TAVILY_API_KEY", "BRAVE_API_KEY", "FIRECRAWL_API_URL", "FIRECRAWL_API_KEY"],
 		);
 		for (const k of AUTH_KEYS) {
 			assert.ok(k.label.length > 0, `${k.id} has a label`);
@@ -34,6 +34,8 @@ describe("the catalog", () => {
 		assert.ok(isKnownAuthKey("DEEPGRAM_API_KEY"));
 		assert.ok(isKnownAuthKey("TAVILY_API_KEY"));
 		assert.ok(isKnownAuthKey("BRAVE_API_KEY"));
+		assert.ok(isKnownAuthKey("FIRECRAWL_API_URL"));
+		assert.ok(isKnownAuthKey("FIRECRAWL_API_KEY"));
 		assert.ok(!isKnownAuthKey("OPENROUTER_API_KEY"));
 		assert.ok(!isKnownAuthKey("OPENAI_API_KEY"), "provider vars are a separate surface");
 		assert.ok(!isKnownAuthKey("FUTURE_PLANS_TOKEN"));
@@ -53,6 +55,20 @@ describe("validateKeyShape (the 400 gate — curated keys)", () => {
 		assert.ok(validateKeyShape("BRAVE_API_KEY", "b".repeat(40)).ok);
 		assert.ok(!validateKeyShape("BRAVE_API_KEY", "b".repeat(19)).ok, "truncated paste");
 		assert.ok(!validateKeyShape("BRAVE_API_KEY", "has whitespace here").ok);
+	});
+
+	it("Firecrawl URL: http(s) server root, no credentials or query", () => {
+		assert.ok(validateKeyShape("FIRECRAWL_API_URL", "http://192.168.7.5:3002").ok);
+		assert.ok(validateKeyShape("FIRECRAWL_API_URL", "  http://192.168.7.5:3002/v1/ ").ok);
+		assert.ok(!validateKeyShape("FIRECRAWL_API_URL", "ftp://192.168.7.5:3002").ok);
+		assert.ok(!validateKeyShape("FIRECRAWL_API_URL", "http://user:pass@192.168.7.5:3002").ok);
+		assert.ok(!validateKeyShape("FIRECRAWL_API_URL", "http://192.168.7.5:3002?x=1").ok);
+	});
+
+	it("Firecrawl key: optional token, no shared prefix, a short truncation guard", () => {
+		assert.ok(validateKeyShape("FIRECRAWL_API_KEY", "fc-local-key").ok);
+		assert.ok(!validateKeyShape("FIRECRAWL_API_KEY", "short").ok);
+		assert.ok(!validateKeyShape("FIRECRAWL_API_KEY", "has whitespace").ok);
 	});
 
 	it("Deepgram: no public format — a ≥20-char truncation guard, no whitespace", () => {

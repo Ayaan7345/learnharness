@@ -27,6 +27,8 @@ for (const varName of [
 	"DEEPGRAM_API_KEY",
 	"TAVILY_API_KEY",
 	"BRAVE_API_KEY",
+	"FIRECRAWL_API_URL",
+	"FIRECRAWL_API_KEY",
 	"GOOGLE_SEARCH_API_KEY",
 	"GOOGLE_CSE_ID",
 	"OPENAI_API_KEY",
@@ -128,6 +130,23 @@ describe("saveKey / deleteKey (immediate effect, no restart)", () => {
 		if (!r.ok) assert.match(r.error, /at least 20/);
 		assert.equal(JSON.stringify(authStore.authVars()), before);
 		assert.equal(process.env.DEEPGRAM_API_KEY, "d".repeat(40));
+	});
+
+	it("FIRECRAWL_API_URL stores the server root; a bad paste is rejected", () => {
+		const bad = saveKey("FIRECRAWL_API_URL", "ftp://192.168.7.5:3002");
+		assert.ok(!bad.ok);
+		const saved = saveKey("FIRECRAWL_API_URL", "http://192.168.7.5:3002/v1/");
+		assert.ok(saved.ok);
+		assert.equal(authStore.authVars().FIRECRAWL_API_URL, "http://192.168.7.5:3002");
+		assert.equal(process.env.FIRECRAWL_API_URL, "http://192.168.7.5:3002");
+		const row = keyStatuses().find((s) => s.id === "FIRECRAWL_API_URL")!;
+		assert.match(row.masked ?? "", /^http:\/\/192\.168\.7\.5:3002 /);
+		deleteKey("FIRECRAWL_API_URL");
+		assert.equal(process.env.FIRECRAWL_API_URL, undefined);
+		const key = saveKey("FIRECRAWL_API_KEY", "fc-local-key");
+		assert.ok(key.ok);
+		assert.ok(!saveKey("FIRECRAWL_API_KEY", "short").ok);
+		deleteKey("FIRECRAWL_API_KEY");
 	});
 
 	it("unknown id: rejected with the supported list", () => {
