@@ -277,6 +277,44 @@ struct ServerAPI: Sendable {
 		try await send(request("/api/activity/abort", method: "POST", json: ["kind": "turn", "id": chatId]))
 	}
 
+	// MARK: Dictation
+
+	/// `nil` when the server has no transcription engine (503). The key is not in the response.
+	func transcriptionEngine() async throws -> String? {
+		let (data, http) = try await raw(request("/api/stt/engine"))
+		if http.statusCode == 503 { return nil }
+		if http.statusCode == 401 { throw APIError.signedOut }
+		if http.statusCode == 403 { throw APIError.refused(Self.errorText(data) ?? "The server refused this app.") }
+		guard (200..<300).contains(http.statusCode) else {
+			throw APIError.server(status: http.statusCode, message: Self.errorText(data) ?? "")
+		}
+		struct Body: Decodable { let engine: String }
+		do { return try JSONDecoder().decode(Body.self, from: data).engine } catch { throw APIError.badResponse }
+	}
+
+	/// The saved dictation language, or English when it isn't set or can't be read.
+	func dictationLanguage() async -> String {
+		struct Body: Decodable {
+			struct Settings: Decodable {
+				struct Dictation: Decodable { let language: String? }
+				let dictation: Dictation?
+			}
+			let settings: Settings?
+		}
+		do {
+			let body = try await decode(Body.self, request("/api/settings"))
+			if let language = body.settings?.dictation?.language, !language.isEmpty { return language }
+		} catch {}
+		return "en"
+	}
+
+	/// Uploads 16 kHz mono PCM. The server holds the provider key.
+	func transcribe(pcm: Data, language: String) async throws -> String {
+		struct Result: Decodable { let text: String }
+		let data = try await send(request("/api/stt/transcribe", method: "POST", json: ["pcm": pcm.base64EncodedString(), "language": language], timeout: 120))
+		do { return try JSONDecoder().decode(Result.self, from: data).text } catch { throw APIError.badResponse }
+	}
+
 	// MARK: Sign-in
 
 	enum SignInResult: Equatable { case signedIn, wrongPassword, throttled }
@@ -373,8 +411,9 @@ struct ServerAPI: Sendable {
 	}
 
 	static func errorText(_ data: Data) -> String? {
-		if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let error = object["error"] as? String, !error.isEmpty {
-			return error
+		if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+			if let error = object["error"] as? String, !error.isEmpty { return error }
+			if let message = object["message"] as? String, !message.isEmpty { return message }
 		}
 		let text = String(decoding: data.prefix(300), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 		return text.isEmpty || text.hasPrefix("<") ? nil : text

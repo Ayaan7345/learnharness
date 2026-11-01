@@ -33,7 +33,7 @@ process.env.LH_AUTH_FILE = path.join(dir, "auth.json");
 delete process.env.OPENROUTER_API_KEY;
 delete process.env.DEEPGRAM_API_KEY;
 
-const { sttEngine, transcribeWithOpenRouter } = await import("../src/server/stt.ts");
+const { sttEngine, transcribeAudio, transcribeWithOpenRouter } = await import("../src/server/stt.ts");
 const engineRoute = await import("../app/api/stt/engine/route.ts");
 const transcribeRoute = await import("../app/api/stt/transcribe/route.ts");
 
@@ -101,7 +101,8 @@ describe("OpenRouter transcription request", () => {
 	});
 });
 
-describe("transcription engine", { concurrency: false }, () => {
+describe("server transcription", { concurrency: false }, () => {
+describe("transcription engine", () => {
 	it("prefers OpenRouter and falls back to a direct Deepgram key only when OpenRouter is unset", () => {
 		delete process.env.OPENROUTER_API_KEY;
 		delete process.env.DEEPGRAM_API_KEY;
@@ -127,7 +128,7 @@ describe("transcription engine", { concurrency: false }, () => {
 	});
 });
 
-describe("POST /api/stt/transcribe", { concurrency: false }, () => {
+describe("POST /api/stt/transcribe", () => {
 	it("calls OpenRouter with the server key and returns only text", async () => {
 		process.env.OPENROUTER_API_KEY = KEY;
 		let captured: { url: string; init: RequestInit } | undefined;
@@ -185,6 +186,7 @@ describe("POST /api/stt/transcribe", { concurrency: false }, () => {
 		}
 
 		delete process.env.OPENROUTER_API_KEY;
+		delete process.env.DEEPGRAM_API_KEY;
 		const missing = await transcribeRoute.POST(new Request("http://localhost/api/stt/transcribe", {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -221,4 +223,42 @@ describe("POST /api/stt/transcribe", { concurrency: false }, () => {
 		);
 		assert.deepEqual(down, { ok: false, status: 502, message: "OpenRouter unreachable" });
 	});
+
+	it("with only a Deepgram key, an upload uses Deepgram's prerecorded API and hides that key", async () => {
+		delete process.env.OPENROUTER_API_KEY;
+		const deepgramKey = "dg-secret-key-value-xxxx";
+		process.env.DEEPGRAM_API_KEY = deepgramKey;
+		let captured: { url: string; init: RequestInit } | undefined;
+		const result = await transcribeAudio(
+			{ pcm: bytesToBase64(PCM), language: "en-US" },
+			async (url, init) => {
+				captured = { url, init };
+				return Response.json({ results: { channels: [{ alternatives: [{ transcript: "IPv6" }] }] } });
+			},
+		);
+		assert.deepEqual(result, { ok: true, text: "IPv6" });
+		assert.ok(captured);
+		const url = new URL(captured!.url);
+		assert.equal(url.origin + url.pathname, "https://api.deepgram.com/v1/listen");
+		assert.equal(url.searchParams.get("model"), "nova-3");
+		assert.equal(url.searchParams.get("smart_format"), "true");
+		assert.equal(url.searchParams.get("punctuate"), "true");
+		assert.equal(url.searchParams.get("language"), "en-US");
+		const headers = captured!.init.headers as Record<string, string>;
+		assert.equal(headers.Authorization, `Token ${deepgramKey}`);
+		assert.equal(headers["Content-Type"], "audio/wav");
+		const raw = captured!.init.body;
+		const wav = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayBuffer);
+		assert.equal(String.fromCharCode(...wav.subarray(0, 4)), "RIFF");
+		assert.equal(url.toString().includes(deepgramKey), false);
+
+		process.env.OPENROUTER_API_KEY = KEY;
+		let used = "";
+		await transcribeAudio({ pcm: bytesToBase64(PCM), language: "en" }, async (url) => {
+			used = url;
+			return Response.json({ text: "router" });
+		});
+		assert.equal(used, OPENROUTER_STT_URL);
+	});
+});
 });

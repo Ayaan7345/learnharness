@@ -4,10 +4,12 @@
  * with the same OPENROUTER_API_KEY the model calls already use. The browser
  * only receives `{ engine }` or `{ text }` — never the key.
  *
- * Direct Deepgram (a short-lived token plus the browser's own WebSocket)
- * remains the fallback when that OpenRouter key is absent. OpenRouter's
- * route can do speech-to-text, so a configured OpenRouter key is not
- * retried against Deepgram.
+ * Direct Deepgram remains the fallback when that OpenRouter key is absent.
+ * The browser still streams to Deepgram with a short-lived token. Clients
+ * that upload a finished recording (the iPhone composer) call the same
+ * POST: this module then uses Deepgram's prerecorded listen API with the
+ * server's DEEPGRAM_API_KEY. OpenRouter's route can do speech-to-text, so
+ * a configured OpenRouter key is not retried against Deepgram.
  */
 import packageMetadata from "../../package.json" with { type: "json" };
 import {
@@ -74,4 +76,61 @@ export async function transcribeWithOpenRouter(body: unknown, fetchFn: FetchLike
 	} catch {
 		return { ok: false, status: 502, message: "OpenRouter unreachable" };
 	}
+}
+
+/**
+ * Prerecorded Deepgram Nova-3 for an uploaded recording. The key stays
+ * here. Used when OPENROUTER_API_KEY is absent and DEEPGRAM_API_KEY is set.
+ * https://developers.deepgram.com/reference/speech-to-text/listen-pre-recorded
+ */
+export async function transcribeWithDeepgram(body: unknown, fetchFn: FetchLike = fetch): Promise<TranscribeResult> {
+	const key = keyValue("DEEPGRAM_API_KEY");
+	if (!key) {
+		return { ok: false, status: 503, message: "No DEEPGRAM_API_KEY — dictation uses the server's Deepgram key." };
+	}
+	const parsed = parseTranscriptionRequest(body);
+	if (!parsed.ok) return parsed;
+	const wav = pcm16ToWav(parsed.pcm);
+	const url = new URL("https://api.deepgram.com/v1/listen");
+	url.searchParams.set("model", "nova-3");
+	url.searchParams.set("smart_format", "true");
+	url.searchParams.set("punctuate", "true");
+	url.searchParams.set("language", parsed.language);
+	try {
+		const res = await fetchFn(url.toString(), {
+			method: "POST",
+			headers: { Authorization: `Token ${key}`, "Content-Type": "audio/wav" },
+			body: wav.buffer.slice(wav.byteOffset, wav.byteOffset + wav.byteLength) as ArrayBuffer,
+			signal: AbortSignal.timeout(120_000),
+		});
+		const raw = await res.text();
+		if (!res.ok) {
+			return { ok: false, status: 502, message: `Deepgram transcription failed (${res.status}): ${redact(raw, key)}` };
+		}
+		let data: unknown;
+		try {
+			data = JSON.parse(raw) as unknown;
+		} catch {
+			return { ok: false, status: 502, message: "Deepgram transcription returned invalid JSON" };
+		}
+		const text = deepgramTranscript(data);
+		if (text === null) return { ok: false, status: 502, message: "Deepgram transcription returned no text" };
+		return { ok: true, text };
+	} catch {
+		return { ok: false, status: 502, message: "Deepgram unreachable" };
+	}
+}
+
+function deepgramTranscript(body: unknown): string | null {
+	if (!body || typeof body !== "object") return null;
+	const channels = (body as { results?: { channels?: { alternatives?: { transcript?: unknown }[] }[] } }).results?.channels;
+	const transcript = channels?.[0]?.alternatives?.[0]?.transcript;
+	return typeof transcript === "string" ? transcript.trim() : null;
+}
+
+/** OpenRouter when its key is set, otherwise a direct Deepgram prerecorded call. */
+export async function transcribeAudio(body: unknown, fetchFn: FetchLike = fetch): Promise<TranscribeResult> {
+	if (keyValue("OPENROUTER_API_KEY")) return transcribeWithOpenRouter(body, fetchFn);
+	if (keyValue("DEEPGRAM_API_KEY")) return transcribeWithDeepgram(body, fetchFn);
+	return { ok: false, status: 503, message: "No transcription key — set OPENROUTER_API_KEY or DEEPGRAM_API_KEY." };
 }

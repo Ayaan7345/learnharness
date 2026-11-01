@@ -130,6 +130,11 @@ export function openRouterTranscriptionBody(wavBase64: string, language: Dictati
 		...(mapped.language ? { language: mapped.language } : {}),
 		provider: {
 			options: {
+				// OpenRouter forwards only this Deepgram allowlist: punctuate,
+				// diarize, smart_format, detect_language. `keyterms` is a
+				// separate field that OpenRouter rejects with 400 when the
+				// selected model cannot use it, and the Deepgram allowlist
+				// does not include keyword boosting, so it is not sent.
 				deepgram: {
 					punctuate: true,
 					smart_format: true,
