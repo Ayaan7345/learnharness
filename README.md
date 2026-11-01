@@ -49,11 +49,11 @@ Future teaching sessions can read the graph instead of starting from scratch. Pr
 - **Windows (x64):** run the installer. It is currently unsigned; Windows may show an “unknown publisher” or SmartScreen warning.
 - **Linux (x64):** make the AppImage executable and open it, or install the Debian/Ubuntu `.deb`.
 
-Add your provider API key and choose your models, then start a session with what you want to understand. LearnHarness supports 30+ provider options, including OpenAI, Anthropic, Google, DeepSeek, and OpenRouter. Optional dictation and web search use separate service keys.
+Add your provider API key and choose your models, then start a session with what you want to understand. LearnHarness supports 30+ provider options, including OpenAI, Anthropic, Google, DeepSeek, and OpenRouter. Optional web search uses its own service key. Dictation transcribes with Deepgram Nova-3 through your OpenRouter key; a separate Deepgram key is used only when OpenRouter is not configured.
 
 All three platforms support in-app updates.
 
-**Dictation:** Create a [Deepgram API key](https://console.deepgram.com/) with the **Member role or higher** ([required for token minting](https://developers.deepgram.com/reference/auth/tokens/grant)) and add it under **Settings → Providers → Dictation**. Choose the language below the key; **Multilingual** supports automatic recognition and mixed-language speech. A `403 Insufficient permissions` error during token minting can indicate an insufficient key role.
+**Dictation:** With an [OpenRouter](https://openrouter.ai/) key (the same key used for models), dictation sends speech to the server, which calls OpenRouter's [Deepgram Nova-3](https://openrouter.ai/deepgram/nova-3) speech-to-text model. The key stays on the server. Choose the language under **Settings → Providers → Dictation**; **Multilingual** asks Deepgram to detect the language. If no OpenRouter key is set, dictation falls back to a direct [Deepgram API key](https://console.deepgram.com/) with the **Member role or higher** ([required for token minting](https://developers.deepgram.com/reference/auth/tokens/grant)), added in that same Dictation section. A `403 Insufficient permissions` error during token minting can indicate an insufficient key role. The iPhone composer's dictate button uses this same server transcription. If the server has no transcription engine, or the request fails, the phone uses Apple's on-device recognizer.
 
 ## Your keys, your data
 

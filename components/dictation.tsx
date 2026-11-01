@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2Icon, MicIcon } from "lucide-react";
 import { useSettingsDialog } from "@/components/settings/settings-dialog";
 import { Hint } from "@/components/ui/hint";
-import { deepgramListenUrl, type DictationLanguage } from "@/src/core";
+import { bytesToBase64, concatBytes, deepgramListenUrl, isSttEngine, STT_MAX_PCM_BYTES, type DictationLanguage, type SttEngine } from "@/src/core";
 import { useDictationLanguage } from "@/components/dictation-preference";
 import { setDictationActive } from "@/components/dictation-state";
 export { isDictationActive } from "@/components/dictation-state";
@@ -18,6 +18,12 @@ export { isDictationActive } from "@/components/dictation-state";
  * through our server) with a short-lived token minted by /api/stt/token
  * (the real key stays server-side), and streams frames while it listens.
  * Finals append into the PRIMARY INPUT (see below).
+ *
+ * OpenRouter is the preferred engine when OPENROUTER_API_KEY is set
+ * (`GET /api/stt/engine`). The same capture keeps the PCM and, on stop,
+ * POSTs it to `/api/stt/transcribe`. The server wraps a WAV and calls
+ * OpenRouter's Deepgram Nova-3 transcription API. That key stays on the
+ * server. With no OpenRouter key, the run uses the direct Deepgram stream.
  *
  * Ported patterns from the owner's pi `dictate` extension (his words:
  * "very well tuned") — see ~/.pi/agent/extensions/dictate:
@@ -107,8 +113,9 @@ export const DEEPGRAM_KEY_ID = "DEEPGRAM_API_KEY";
  * the token route's raw 503 message is dev-speak ("add it to auth.json
  * (desktop) or .env.local (dev)") — the surface says the short truth
  * instead. Exported for pins; the errored idle button's click recognizes
- * it and deep-links Settings → Keys → the Deepgram row. */
-export const DICTATION_KEYLESS = "Dictation needs a Deepgram key";
+ * it and deep-links Settings → Keys → the Deepgram row. Either an
+ * OpenRouter key or a direct Deepgram key unlocks dictation. */
+export const DICTATION_KEYLESS = "Dictation needs an OpenRouter or Deepgram key";
 
 /** Mint a fresh short-lived token (the route holds the real key
  *  server-side). Module-level: the start path's warm cache and the
@@ -124,6 +131,42 @@ async function mintFreshToken(): Promise<string> {
 		throw new Error(data.message ?? `token route ${res.status}`);
 	}
 	return data.token;
+}
+
+/** Which server engine can run. 503 is the only keyless signal — neither
+ *  OpenRouter nor Deepgram is configured. The raw 503 text stays off the
+ *  button; the client shows DICTATION_KEYLESS instead. */
+async function fetchSttEngine(): Promise<SttEngine> {
+	const res = await fetch("/api/stt/engine");
+	let data: { engine?: unknown; message?: string } = {};
+	try {
+		data = (await res.json()) as typeof data;
+	} catch {
+		/* a non-JSON failure still uses status below */
+	}
+	if (res.status === 503) throw new Error(DICTATION_KEYLESS);
+	if (!res.ok || !isSttEngine(data.engine)) throw new Error(data.message ?? `transcription route ${res.status}`);
+	return data.engine;
+}
+
+/** Send one captured utterance to the server. The OpenRouter key is not
+ *  in this request. 503 again means the key disappeared mid-run. */
+async function transcribeCaptured(pcm: string, language: DictationLanguage, signal: AbortSignal): Promise<string> {
+	const res = await fetch("/api/stt/transcribe", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ pcm, language }),
+		signal,
+	});
+	let data: { text?: unknown; message?: string } = {};
+	try {
+		data = (await res.json()) as typeof data;
+	} catch {
+		/* same as above */
+	}
+	if (res.status === 503) throw new Error(DICTATION_KEYLESS);
+	if (!res.ok || typeof data.text !== "string") throw new Error(data.message ?? `transcription route ${res.status}`);
+	return data.text;
 }
 
 /** Warm-token cache (mitigation D, owner 2026-09-27): the click path takes
@@ -303,6 +346,18 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	// the per-run nodes disconnect on teardown; the socket is recreated per
 	// run; the AudioContext is app-lifetime (mitigation C).
 	const wsRef = useRef<WebSocket | null>(null);
+	/** Set once the engine route answers. OpenRouter buffers PCM; Deepgram streams. */
+	const engineModeRef = useRef<SttEngine | null>(null);
+	/** PCM captured for the OpenRouter upload (the whole utterance, not the
+	 *  pre-socket queue). Cleared at teardown. */
+	const captureRef = useRef<ArrayBuffer[]>([]);
+	const captureBytesRef = useRef(0);
+	/** Language of the current run, sent with the upload. */
+	const languageRef = useRef<DictationLanguage>("en");
+	/** In-flight OpenRouter upload. Cancel aborts it. */
+	const abortRef = useRef<AbortController | null>(null);
+	/** Latest stop(), so the capture cap can end the run from the worklet callback. */
+	const endRunRef = useRef<() => void>(() => {});
 	const streamRef = useRef<MediaStream | null>(null);
 	/** Per-run graph nodes — the CONTEXT outlives runs (mitigation C). */
 	const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -333,8 +388,15 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 
 	/** Full teardown of one run's machinery. Idempotent; generation-guarded by callers. */
 	const cleanup = useCallback((warmNext = true) => {
+		const engine = engineModeRef.current;
 		genRef.current++;
 		setDictationActive(false);
+		engineModeRef.current = null;
+		captureRef.current = [];
+		captureBytesRef.current = 0;
+		const upload = abortRef.current;
+		abortRef.current = null;
+		upload?.abort();
 		flush(); // the deferred transcript appears when the run ends (owner round 2)
 		if (safetyRef.current) {
 			clearTimeout(safetyRef.current);
@@ -360,9 +422,9 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		// a submit path resuming after `await finishDictation()` reads the
 		// target field with the dictated tail already in it.
 		for (const w of waitersRef.current.splice(0)) w();
-		// Pre-mint for the next run (mitigation D) — best-effort; a keyless
-		// page just doesn't warm.
-		if (warmNext) warmTokens.refresh();
+		// Pre-mint for the next direct-Deepgram run (mitigation D). OpenRouter
+		// runs have no token to warm; a keyless page just doesn't warm.
+		if (warmNext && engine === "deepgram") warmTokens.refresh();
 	}, []);
 
 	/** Open the Deepgram socket and wire its messages. `gen` guards staleness. */
@@ -437,6 +499,9 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		reconnectsRef.current = 0;
 		bufferRef.current = []; // fresh run, fresh buffer (round 2)
 		pendingRef.current = []; // fresh run, fresh queue (mitigation A)
+		captureRef.current = [];
+		captureBytesRef.current = 0;
+		engineModeRef.current = null;
 		const gen = ++genRef.current;
 		let language: DictationLanguage;
 		try {
@@ -448,15 +513,14 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			return;
 		}
 		if (gen !== genRef.current) return;
+		languageRef.current = language;
 
-		// Mitigation D: the warm token (pre-minted at mount / after the last
-		// run) resolves ~instantly; a cold/keyless mint surfaces below. The
-		// mic is the long pole (macOS HAL + APM init) and gates everything —
-		// the token runs concurrently with it. 127.0.0.1 is a secure
+		// The engine route decides the path before any token mint. The mic
+		// is the long pole and runs concurrently. 127.0.0.1 is a secure
 		// context, so getUserMedia works without TLS; macOS TCC prompts on
 		// first use.
-		const tokenPromise = warmTokens.mint();
-		tokenPromise.catch(() => {}); // surfaced below; no unhandled rejection
+		const enginePromise = fetchSttEngine();
+		enginePromise.catch(() => {}); // surfaced below; no unhandled rejection
 		const micPromise = navigator.mediaDevices.getUserMedia({
 			audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
 		});
@@ -482,14 +546,23 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 				const msg = e.data as { type: string; rms?: number; buffer?: ArrayBuffer };
 				if (msg.type === "level") {
 					levelRef.current = msg.rms ?? 0; // never reset to zero (dictate pattern)
-				} else if (msg.type === "audio") {
-					const ws = wsRef.current;
-					if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer!);
-					// Mitigation A: not OPEN yet (handshake or reconnect gap) —
-					// queue, capped; the open handler flushes in order.
-					else {
-						pendingRef.current.push(msg.buffer!);
-						if (pendingRef.current.length > 256) pendingRef.current.shift();
+				} else if (msg.type === "audio" && msg.buffer) {
+					if (engineModeRef.current === "openrouter") {
+						if (captureBytesRef.current + msg.buffer.byteLength > STT_MAX_PCM_BYTES) {
+							endRunRef.current();
+							return;
+						}
+						captureRef.current.push(msg.buffer);
+						captureBytesRef.current += msg.buffer.byteLength;
+					} else {
+						const ws = wsRef.current;
+						if (ws && ws.readyState === WebSocket.OPEN) ws.send(msg.buffer);
+						// Mitigation A: not OPEN yet (handshake or reconnect gap) —
+						// queue, capped; the open handler flushes in order.
+						else {
+							pendingRef.current.push(msg.buffer);
+							if (pendingRef.current.length > 256) pendingRef.current.shift();
+						}
 					}
 				}
 			};
@@ -512,9 +585,31 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			return;
 		}
 		if (gen !== genRef.current) return;
+		let engine: SttEngine;
+		try {
+			engine = await enginePromise;
+		} catch (e) {
+			if (gen !== genRef.current) return;
+			setError(e instanceof Error ? e.message : "transcription unavailable");
+			cleanup();
+			return;
+		}
+		if (gen !== genRef.current) return;
+		engineModeRef.current = engine;
+		if (engine === "openrouter") {
+			// Speech captured while the engine route was in flight belongs
+			// to this utterance. The upload happens on stop.
+			captureRef.current = pendingRef.current;
+			captureBytesRef.current = pendingRef.current.reduce((sum, frame) => sum + frame.byteLength, 0);
+			pendingRef.current = [];
+			setPhase("recording");
+			return;
+		}
 		let token: string;
 		try {
-			token = await tokenPromise;
+			// Mitigation D: the warm token (pre-minted when this engine was
+			// already deepgram) resolves ~instantly; a cold mint surfaces here.
+			token = await warmTokens.mint();
 		} catch (e) {
 			if (gen !== genRef.current) return;
 			setError(e instanceof Error ? e.message : "token unavailable");
@@ -522,8 +617,8 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			return;
 		}
 		if (gen !== genRef.current) return;
-		// Mitigation B: the handshake fires the moment the graph is live,
-		// overlapping any remaining token wait — mic-gated, never before it.
+		// Mitigation B: the handshake fires the moment the graph is live —
+		// mic-gated, never before it.
 		openSocket(gen, token, language);
 	}, [openSocket, cleanup, getLanguage]);
 
@@ -540,6 +635,32 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 		sourceRef.current = null;
 		workletRef.current?.disconnect();
 		workletRef.current = null;
+
+		if (engineModeRef.current === "openrouter") {
+			const pcm = concatBytes(captureRef.current);
+			captureRef.current = [];
+			captureBytesRef.current = 0;
+			if (pcm.byteLength === 0) {
+				cleanup();
+				return;
+			}
+			const controller = new AbortController();
+			abortRef.current = controller;
+			const language = languageRef.current;
+			void transcribeCaptured(bytesToBase64(pcm), language, controller.signal)
+				.then((text) => {
+					if (gen !== genRef.current) return;
+					if (text) bufferRef.current.push(text);
+					cleanup();
+				})
+				.catch((e: unknown) => {
+					if (gen !== genRef.current) return;
+					if (e instanceof DOMException && e.name === "AbortError") return;
+					setError(e instanceof Error ? e.message : "Transcription failed");
+					cleanup();
+				});
+			return;
+		}
 
 		const ws = wsRef.current;
 		if (ws && ws.readyState === WebSocket.OPEN) {
@@ -558,6 +679,7 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 			cleanup();
 		}
 	}, [phase, cleanup]);
+	endRunRef.current = stop;
 
 	const cancel = useCallback(() => {
 		if (phase === "idle") return;
@@ -600,8 +722,16 @@ export function useDictation({ append }: { append: (text: string) => void }): Di
 	// page owns ONE hook instance, and only the mounted page's listener is
 	// attached.
 	useEffect(() => {
-		warmTokens.refresh(); // pre-mint at mount (mitigation D) — silent if keyless
+		// Pre-mint a Deepgram token only when that fallback is the engine.
+		// OpenRouter has nothing to mint; a keyless page stays quiet.
+		let cancelled = false;
+		void fetchSttEngine()
+			.then((engine) => {
+				if (!cancelled && engine === "deepgram") warmTokens.refresh();
+			})
+			.catch(() => {});
 		return () => {
+			cancelled = true;
 			// Navigation cancels capture: invalidate every pending await before
 			// releasing resources, and never append into a different page's input.
 			bufferRef.current = [];

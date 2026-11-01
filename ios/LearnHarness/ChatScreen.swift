@@ -254,10 +254,11 @@ struct ShareSheet: UIViewControllerRepresentable {
 	func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
-/// The composer, in the desktop dock's shape: a bordered card with the
-/// mic on the left and send (or stop while the teacher works) on the right.
+/// The composer, in the desktop dock's shape: a small dictate button on
+/// the left and send (or stop while the teacher works) on the right.
 struct ComposerBar: View {
 	@Binding var text: String
+	@Environment(AppModel.self) private var model
 	let busy: Bool
 	let sending: Bool
 	let canSend: Bool
@@ -273,13 +274,24 @@ struct ComposerBar: View {
 
 	private var hasText: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
+	private var composerPrompt: String {
+		switch dictation.phase {
+		case .recording: "Recording… tap the mic to stop"
+		case .transcribing: "Transcribing…"
+		case .idle: nextReady ? "Ask anything, or tap Next problem." : "Ask, answer, or steer the lesson…"
+		}
+	}
+
 	var body: some View {
 		VStack(spacing: 8) {
 			if let message = error ?? dictation.error {
 				HStack(alignment: .top) {
 					Image(systemName: "exclamationmark.triangle.fill")
 					Text(message).frame(maxWidth: .infinity, alignment: .leading)
-					Button { onDismissError() } label: { Image(systemName: "xmark") }
+					Button {
+						dictation.dismissError()
+						onDismissError()
+					} label: { Image(systemName: "xmark") }
 						.accessibilityLabel("Dismiss")
 				}
 				.font(Theme.ui(12))
@@ -302,7 +314,7 @@ struct ComposerBar: View {
 				TextField(
 					"",
 					text: $text,
-					prompt: Text(nextReady ? "Ask anything, or tap Next problem." : "Ask, answer, or steer the lesson…").foregroundStyle(Theme.muted),
+					prompt: Text(composerPrompt).foregroundStyle(Theme.muted),
 					axis: .vertical
 				)
 				.font(Theme.ui(15))
@@ -336,8 +348,10 @@ struct ComposerBar: View {
 			.accessibilityLabel("Stop")
 		} else {
 			Button {
-				dictation.stop()
-				onSend()
+				Task {
+					await dictation.finish(api: model.api, read: { text }, write: { text = $0 })
+					onSend()
+				}
 			} label: {
 				Group {
 					if sending {

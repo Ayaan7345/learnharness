@@ -35,29 +35,33 @@ struct NewSessionView: View {
 					.font(Theme.ui(13))
 					.foregroundStyle(Theme.muted)
 
-				ZStack(alignment: .topLeading) {
-					if text.isEmpty {
-						Text(practice ? "e.g. Subnetting for the CCNA" : "e.g. How does TCP congestion control work?")
-							.font(Theme.ui(15))
-							.foregroundStyle(Theme.muted.opacity(0.6))
-							.padding(.horizontal, 5)
-							.padding(.vertical, 8)
+				HStack(alignment: .bottom, spacing: 4) {
+					ZStack(alignment: .topLeading) {
+						if text.isEmpty {
+							Text(dictation.phase == .recording ? "Recording… tap the mic to stop" : dictation.phase == .transcribing ? "Transcribing…" : practice ? "e.g. Subnetting for the CCNA" : "e.g. How does TCP congestion control work?")
+								.font(Theme.ui(15))
+								.foregroundStyle(Theme.muted.opacity(0.6))
+								.padding(.horizontal, 5)
+								.padding(.vertical, 8)
+						}
+						TextEditor(text: $text)
+							.focused($focused)
+							.scrollContentBackground(.hidden)
 					}
-					TextEditor(text: $text)
-						.focused($focused)
-						.scrollContentBackground(.hidden)
+					.font(Theme.ui(15))
+					.frame(minHeight: 140)
+					DictationButton(text: $text, dictation: dictation)
+						.padding(.bottom, 4)
 				}
-				.font(Theme.ui(15))
-				.frame(minHeight: 140)
-				.padding(10)
+				.padding(.leading, 10)
+				.padding(.trailing, 4)
+				.padding(.vertical, 6)
 				.lhCard()
 
-				HStack {
-					DictationButton(text: $text, dictation: dictation)
-					if let error = dictation.error {
-						Text(error).font(.caption).foregroundStyle(.orange)
-					}
-					Spacer()
+				if let error = dictation.error {
+					Label(error, systemImage: "exclamationmark.triangle.fill")
+						.font(Theme.ui(12))
+						.foregroundStyle(Theme.warning)
 				}
 
 				if let error {
@@ -97,19 +101,20 @@ struct NewSessionView: View {
 				}
 			}
 			.onAppear { focused = true }
-			.onDisappear { dictation.stop() }
+			.onDisappear { dictation.cancel() }
 		}
 		.presentationDetents([.large])
 	}
 
 	private func start() {
-		let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
-		guard !message.isEmpty, !starting else { return }
-		dictation.stop()
+		guard !starting else { return }
 		starting = true
 		error = nil
 		Task {
 			defer { starting = false }
+			await dictation.finish(api: model.api, read: { text }, write: { text = $0 })
+			let message = text.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !message.isEmpty else { return }
 			do {
 				let id = try await model.startSession(with: message, practice: practice)
 				dismiss()

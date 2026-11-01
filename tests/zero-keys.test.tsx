@@ -113,7 +113,7 @@ describe("SetupKeysBody — stage 1's self-contained first-key screen", () => {
 
 describe("the dictation keyless seam (owner dictation trio)", () => {
 	it("the client-authored short line — not the route's dev-speak", () => {
-		assert.equal(DICTATION_KEYLESS, "Dictation needs a Deepgram key");
+		assert.equal(DICTATION_KEYLESS, "Dictation needs an OpenRouter or Deepgram key");
 	});
 
 	it("the Deepgram row id matches the keys store (KeysSection openRow)", () => {

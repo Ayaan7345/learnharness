@@ -613,7 +613,7 @@ export function KeysSection({
 				{label === "Dictation" && <>
 					<DictationLanguageSetting />
 					<p data-testid="dictation-setup-hint" className="px-1 text-[11px] leading-relaxed text-muted-foreground/70">
-						Create a <a
+						When an OpenRouter key is set, dictation uses OpenRouter's Deepgram Nova-3 model. Otherwise, create a <a
 							href="https://console.deepgram.com/"
 							target="_blank"
 							rel="noreferrer"

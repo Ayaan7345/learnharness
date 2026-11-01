@@ -49,7 +49,7 @@
 		<string>cmunbx.ttf</string>
 	</array>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>LearnHarness turns your dictation into text, on this iPhone when it can, so you can speak your answers.</string>
+	<string>LearnHarness uses on-device speech recognition when your server can't transcribe dictation.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>LearnHarness connects to your self-hosted LearnHarness server on your local network.</string>
 	<!-- Self-hosted servers on a home network or Tailscale are often plain

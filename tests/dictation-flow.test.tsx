@@ -2,11 +2,12 @@ import React, { act } from "react";
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { parseHTML } from "linkedom";
-import { useDictation, type Dictation } from "../components/dictation.tsx";
+import { useDictation, DICTATION_KEYLESS, type Dictation } from "../components/dictation.tsx";
+import { bytesToBase64 } from "../src/core/stt.ts";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { useDictationLanguage } from "../components/dictation-preference.ts";
 import { isDictationActive, useDictationActive } from "../components/dictation-state.ts";
-import type { UserSettings } from "../src/core/index.ts";
+import type { DictationLanguage, UserSettings } from "../src/core/index.ts";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -39,13 +40,20 @@ class AudioGraph {
 	audioWorklet = { addModule: async () => {} };
 	createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
 }
-class Worklet { port = {}; connect() {} disconnect() {} }
+class Worklet {
+	static all: Worklet[] = [];
+	port: { onmessage: ((event: { data: { type: string; buffer?: ArrayBuffer } }) => void) | null } = { onmessage: null };
+	constructor() { Worklet.all.push(this); }
+	connect() {}
+	disconnect() {}
+	audio(buffer: ArrayBuffer) { this.port.onmessage?.({ data: { type: "audio", buffer } }); }
+}
 
 const globals = globalThis as Record<string, unknown>;
 let restore: (() => void) | undefined;
 let dispose: (() => Promise<void>) | undefined;
 
-async function fixture(language: "pl" | "en" = "pl", delayedRead?: Promise<Response>) {
+async function fixture(language: DictationLanguage = "pl", delayedRead?: Promise<Response>) {
 	const dom = parseHTML("<html><body><div id='root'></div></body></html>");
 	const state = {
 		record: { version: 1, dictation: { language } } as UserSettings,
@@ -58,8 +66,14 @@ async function fixture(language: "pl" | "en" = "pl", delayedRead?: Promise<Respo
 		captures: 0,
 		stops: 0,
 		appends: [] as string[],
+		engine: "deepgram" as "deepgram" | "openrouter" | "none",
+		transcribeText: "",
+		transcribeStatus: 0,
+		transcribeMessage: "",
+		transcriptions: [] as { pcm: string; language: string }[],
 	};
 	Socket.all = [];
+	Worklet.all = [];
 	const previous = new Map<string, PropertyDescriptor | undefined>();
 	for (const [key, value] of Object.entries({
 		React, window: dom.window, document: dom.document, CustomEvent: dom.window.CustomEvent,
@@ -71,6 +85,15 @@ async function fixture(language: "pl" | "en" = "pl", delayedRead?: Promise<Respo
 		WebSocket: Socket, AudioContext: AudioGraph, AudioWorkletNode: Worklet,
 		IS_REACT_ACT_ENVIRONMENT: true,
 		fetch: async (url: string, init?: RequestInit) => {
+			if (url === "/api/stt/engine") {
+				if (state.engine === "none") return Response.json({ message: "no key" }, { status: 503 });
+				return Response.json({ engine: state.engine });
+			}
+			if (url === "/api/stt/transcribe") {
+				state.transcriptions.push(JSON.parse(init?.body as string) as { pcm: string; language: string });
+				if (state.transcribeStatus) return Response.json({ message: state.transcribeMessage }, { status: state.transcribeStatus });
+				return Response.json({ text: state.transcribeText });
+			}
 			if (url === "/api/stt/token") return Response.json({ token: "test-token" });
 			if (url === "/api/settings") {
 				state.reads++;
@@ -162,6 +185,7 @@ test("waits for the saved language; reconnect preserves it and finals still flus
 	assert.equal(f.state.active, false);
 	await act(async () => { f.dictation.toggle(); });
 	assert.equal(Socket.all[2]!.language, "multi");
+	assert.equal(f.state.transcriptions.length, 0, "the direct stream does not upload audio");
 });
 
 test("a failed save keeps the previous language, including a shortcut pressed while saving", async () => {
@@ -319,4 +343,63 @@ test("microphone permission resolving after unmount immediately stops the late s
 	assert.equal(f.state.stops, 1);
 	assert.equal(Socket.all.length, 0);
 	assert.equal(isDictationActive(), false);
+});
+
+test("an OpenRouter engine uploads captured PCM on stop and appends the transcript once", async () => {
+	const f = await fixture("pl");
+	f.state.engine = "openrouter";
+	f.state.transcribeText = "Cześć świecie";
+	await f.mount();
+	await act(async () => { f.dictation.toggle(); });
+	assert.equal(f.dictation.phase, "recording");
+	assert.equal(Socket.all.length, 0, "OpenRouter dictation does not open a Deepgram socket");
+	const pcm = new Uint8Array([1, 2, 3, 4]);
+	await act(async () => { Worklet.all.at(-1)!.audio(pcm.buffer); });
+	await act(async () => { await f.dictation.finish(); });
+	assert.equal(f.dictation.phase, "idle");
+	assert.deepEqual(f.state.appends, ["Cześć świecie"]);
+	assert.equal(f.state.transcriptions.length, 1);
+	assert.equal(f.state.transcriptions[0]!.language, "pl");
+	assert.equal(f.state.transcriptions[0]!.pcm, bytesToBase64(pcm));
+	assert.equal(f.state.stops, 1);
+});
+
+test("cancel during an OpenRouter capture discards the audio and does not upload", async () => {
+	const f = await fixture("en");
+	f.state.engine = "openrouter";
+	f.state.transcribeText = "should not land";
+	await f.mount();
+	await act(async () => { f.dictation.toggle(); });
+	const pcm = new Uint8Array([8, 0]);
+	await act(async () => { Worklet.all.at(-1)!.audio(pcm.buffer); });
+	await act(async () => { f.dictation.cancel(); });
+	assert.equal(f.dictation.phase, "idle");
+	assert.deepEqual(f.state.appends, []);
+	assert.equal(f.state.transcriptions.length, 0);
+});
+
+test("a failed OpenRouter transcription surfaces the server message and appends nothing", async () => {
+	const f = await fixture("en-GB");
+	f.state.engine = "openrouter";
+	f.state.transcribeStatus = 502;
+	f.state.transcribeMessage = "OpenRouter transcription failed (401): unauthorized";
+	await f.mount();
+	await act(async () => { f.dictation.toggle(); });
+	await act(async () => { Worklet.all.at(-1)!.audio(new Uint8Array([1, 0]).buffer); });
+	await act(async () => { f.dictation.stop(); });
+	assert.equal(f.dictation.phase, "idle");
+	assert.equal(f.dictation.error, "OpenRouter transcription failed (401): unauthorized");
+	assert.deepEqual(f.state.appends, []);
+	assert.equal(f.state.transcriptions[0]!.language, "en-GB");
+});
+
+test("neither transcription key shows the keyless line and opens no socket", async () => {
+	const f = await fixture();
+	f.state.engine = "none";
+	await f.mount();
+	await act(async () => { f.dictation.toggle(); });
+	assert.equal(f.dictation.phase, "idle");
+	assert.equal(f.dictation.error, DICTATION_KEYLESS);
+	assert.equal(Socket.all.length, 0);
+	assert.equal(f.state.transcriptions.length, 0);
 });

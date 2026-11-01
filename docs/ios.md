@@ -14,8 +14,14 @@ dictation — and everything stays in sync because it all lives on the server.
 - **Stays signed in** for 30 days, like the desktop app.
 - **⋯ menu** in the strip beside the home indicator: Reload, Change
   Server…, Sign Out (signs out this phone only).
-- **Microphone** for dictation (asked the first time you dictate; granted
-  to your server's pages only).
+- **Dictation** is a small button beside the composer. Tap once to record,
+  tap again to stop. The recording is sent to the server's transcription
+  route (OpenRouter's Deepgram Nova-3, or Deepgram directly when that is
+  the server's engine). The API key stays on the server. The transcript
+  is inserted into the composer, and the button shows recording and
+  transcribing. If the server has no transcription engine, or the request
+  fails, the phone uses Apple's on-device recognizer instead. Microphone
+  access is asked the first time you dictate.
 - Links to other sites open in Safari; exported files open the share sheet.
 - A "Can't reach your server" screen with Try Again / Change Server when
   you're away from home without Tailscale.

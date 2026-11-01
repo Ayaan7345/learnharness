@@ -20,6 +20,7 @@
 		B906308D47FA8658F48CF688 /* cmunbx.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7E395DCB0FEBEE3A73F7475C /* cmunbx.ttf */; };
 		C9E1C7066E1A4AA084179459 /* ConnectionTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A727B4C9CA9E8FCDACF16F16 /* ConnectionTest.swift */; };
 		DCDCD6ABEB482F0D25F09D1E /* ServerAddressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADD9B5ED780E8FCE79640456 /* ServerAddressTests.swift */; };
+		B3A4958675049382A1B2C3D4 /* DictationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E2D3C4B5A6978869504A3B /* DictationTests.swift */; };
 		DD3BFEE3A36B7A68841C70F2 /* LearnHarnessApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF66A05E71DF8368D500E8F4 /* LearnHarnessApp.swift */; };
 		E26A23F5BC3673E0C861ACE7 /* Dictation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAD74CA005D1771B87179307 /* Dictation.swift */; };
 		E42627E0977EE8FC0E7F103C /* ServerAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E917504BF2022A02C512E6CC /* ServerAPI.swift */; };
@@ -56,6 +57,7 @@
 		A727B4C9CA9E8FCDACF16F16 /* ConnectionTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionTest.swift; sourceTree = "<group>"; };
 		AAD74CA005D1771B87179307 /* Dictation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dictation.swift; sourceTree = "<group>"; };
 		ADD9B5ED780E8FCE79640456 /* ServerAddressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerAddressTests.swift; sourceTree = "<group>"; };
+		F1E2D3C4B5A6978869504A3B /* DictationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationTests.swift; sourceTree = "<group>"; };
 		BE87A15DE6632DBA8D5EF9E1 /* LearnHarness.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = LearnHarness.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CF0F281510444C456C2CD42A /* SessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsView.swift; sourceTree = "<group>"; };
 		DF66A05E71DF8368D500E8F4 /* LearnHarnessApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearnHarnessApp.swift; sourceTree = "<group>"; };
@@ -103,6 +105,7 @@
 			isa = PBXGroup;
 			children = (
 				ADD9B5ED780E8FCE79640456 /* ServerAddressTests.swift */,
+				F1E2D3C4B5A6978869504A3B /* DictationTests.swift */,
 			);
 			path = LearnHarnessTests;
 			sourceTree = "<group>";
@@ -219,6 +222,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DCDCD6ABEB482F0D25F09D1E /* ServerAddressTests.swift in Sources */,
+				B3A4958675049382A1B2C3D4 /* DictationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
