@@ -11,7 +11,8 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveSearchEngineFor, tavilyProvider, braveProvider } from "../src/server/search.ts";
+import { resolveSearchEngineFor, tavilyProvider, braveProvider, firecrawlProvider, resetFirecrawlSearchCache } from "../src/server/search.ts";
+import { FirecrawlSearchUnsupportedError } from "../src/core/firecrawl.ts";
 
 describe("resolveSearchEngineFor (the auto-detect decision)", () => {
 	it("no keys: honestly unavailable, no default", () => {
@@ -129,5 +130,101 @@ describe("braveProvider (wire shape per Brave's dashboard docs, verified 2026-09
 			new Response("rate limited", { status: 429 }),
 		);
 		await assert.rejects(provider.search("q", 5), /Brave search API 429/);
+	});
+});
+
+describe("resolveSearchEngineFor — Firecrawl", () => {
+	const url = { apiUrl: "http://192.168.7.5:3002", apiKey: "fc-local-key" };
+
+	it("a URL alone activates Firecrawl; it does not outrank a keyed engine", () => {
+		const only = resolveSearchEngineFor(undefined, {}, url);
+		assert.equal(only.engine, "firecrawl");
+		assert.equal(only.apiUrl, "http://192.168.7.5:3002");
+		assert.match(only.reason, /auto/);
+
+		const tavily = resolveSearchEngineFor(undefined, { tavily: "tvly-throwaway-key-00001" }, url);
+		assert.equal(tavily.engine, "tavily");
+		assert.equal(tavily.apiUrl, null);
+
+		const brave = resolveSearchEngineFor(undefined, { brave: "brave-throwaway-key-00001" }, url);
+		assert.equal(brave.engine, "brave");
+	});
+
+	it("an explicit Firecrawl pin wins, and does not fall back when the URL is missing", () => {
+		const chosen = resolveSearchEngineFor("firecrawl", { tavily: "tvly-throwaway-key-00001" }, url);
+		assert.equal(chosen.engine, "firecrawl");
+		assert.match(chosen.reason, /chosen/);
+		const missing = resolveSearchEngineFor("firecrawl", { brave: "brave-throwaway-key-00001" }, null);
+		assert.equal(missing.available, false);
+		assert.match(missing.reason, /FIRECRAWL_API_URL is missing/);
+	});
+
+	it("a keyless world with no URL is unchanged", () => {
+		const out = resolveSearchEngineFor(undefined, {});
+		assert.equal(out.available, false);
+		assert.match(out.reason, /no search engine configured/);
+		assert.equal(out.apiUrl, null);
+	});
+});
+
+describe("firecrawlProvider (v1 scrape + search)", () => {
+	const api = "http://192.168.7.5:3002";
+
+	it("scrapes with formats:[markdown] and no auth header when no key is set", async () => {
+		const provider = firecrawlProvider(api, undefined, stubFetch(
+			{ success: true, data: { markdown: "# Hello\n\nbody", metadata: { title: "Hello", sourceURL: "https://example.com/a", statusCode: 200 } } },
+			(url, init) => {
+				assert.equal(url, `${api}/v1/scrape`);
+				assert.equal(init.method, "POST");
+				assert.equal(init.redirect, "error");
+				const headers = init.headers as Record<string, string>;
+				assert.equal(headers.authorization, undefined);
+				assert.deepEqual(JSON.parse(init.body as string), { url: "https://example.com/a", formats: ["markdown"] });
+			},
+		));
+		const page = await provider.scrape("https://example.com/a");
+		assert.equal(page.markdown, "# Hello\n\nbody");
+		assert.equal(page.title, "Hello");
+		assert.equal(page.sourceUrl, "https://example.com/a");
+		assert.equal(page.statusCode, 200);
+	});
+
+	it("sends the optional key as a bearer token and keeps it out of errors", async () => {
+		const key = "fc-throwaway-key";
+		const provider = firecrawlProvider(api, key, async (_url, init) => {
+			const headers = init?.headers as Record<string, string>;
+			assert.equal(headers.authorization, `Bearer ${key}`);
+			return new Response(JSON.stringify({ success: false, error: "blocked" }), { status: 403 });
+		});
+		await assert.rejects(provider.scrape("https://example.com/a"), (err: Error) => {
+			assert.match(err.message, /Firecrawl scrape failed \(403\): blocked/);
+			assert.equal(err.message.includes(key), false);
+			return true;
+		});
+	});
+
+	it("search posts /v1/search and maps hits", async () => {
+		resetFirecrawlSearchCache();
+		const provider = firecrawlProvider(api, undefined, stubFetch(
+			{ success: true, data: [{ title: "Example", url: "https://example.com/b", description: "a description" }] },
+			(url, init) => {
+				assert.equal(url, `${api}/v1/search`);
+				assert.deepEqual(JSON.parse(init.body as string), { query: "test query", limit: 5 });
+			},
+		));
+		assert.deepEqual(await provider.search("test query", 5), [{ title: "Example", url: "https://example.com/b", snippet: "a description" }]);
+	});
+
+	it("a missing SearxNG endpoint is unsupported, and the next call does not hit the network", async () => {
+		resetFirecrawlSearchCache();
+		let calls = 0;
+		const provider = firecrawlProvider(api, undefined, async () => {
+			calls += 1;
+			return new Response(JSON.stringify({ success: false, error: "Search is not configured. Set SEARXNG_ENDPOINT." }), { status: 400 });
+		});
+		await assert.rejects(provider.search("q", 1), (err: unknown) => err instanceof FirecrawlSearchUnsupportedError);
+		await assert.rejects(provider.search("q", 1), (err: unknown) => err instanceof FirecrawlSearchUnsupportedError);
+		assert.equal(calls, 1);
+		resetFirecrawlSearchCache();
 	});
 });

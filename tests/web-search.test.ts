@@ -12,6 +12,7 @@ import { createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, type Faux
 import type { JobStore } from "../src/core/ports.ts";
 import type { JobRecord } from "../src/core/contracts.ts";
 import type { SearchHit, SearchProvider } from "../src/core/search.ts";
+import { FirecrawlSearchUnsupportedError, type PageReader } from "../src/core/firecrawl.ts";
 
 function stubProvider(hits: SearchHit[] = [{ title: "t", url: "https://e.com/", snippet: "s" }]): SearchProvider {
 	return {
@@ -102,6 +103,44 @@ describe("web_search on the injected port (web.ts)", () => {
 
 			const ftp = await web_fetch!.execute!("c-ftp", { url: "ftp://example.com/file" });
 			assert.match(String(ftp.details), /invalid URL/, "non-http(s) schemes still rejected");
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+	});
+
+	it("a Firecrawl reader replaces the built-in fetch, and a missing search endpoint is not retried", async () => {
+		const reader: PageReader = {
+			async scrape(url) {
+				assert.equal(url, "https://example.com/page");
+				return { markdown: "Page body from Firecrawl.", title: "Page", sourceUrl: url, statusCode: 200, contentType: "text/html" };
+			},
+		};
+		let fetched = 0;
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = (async () => {
+			fetched += 1;
+			throw new Error("built-in fetch should not run");
+		}) as typeof fetch;
+		try {
+			const { web_fetch, web_search } = createWebTools(
+				() => ({
+					id: "firecrawl",
+					async search() {
+						throw new FirecrawlSearchUnsupportedError();
+					},
+				}),
+				() => reader,
+			);
+			assert.match(web_fetch!.description, /Firecrawl/);
+			const page = await web_fetch!.execute!("c-fc", { url: "https://example.com/page" });
+			assert.match(String(page.details), /Page body from Firecrawl/);
+			assert.match(String(page.details), /Source: https:\/\/example\.com\/page \(HTTP 200\)/);
+			assert.equal(fetched, 0);
+			const pdf = await web_fetch!.execute!("c-pdf", { url: "https://example.com/paper.pdf" });
+			assert.match(String(pdf.details), /web_fetch_pdf/);
+			const search = await web_search!.execute!("c-search", { query: "q" });
+			assert.match(String(search.details), /no search endpoint configured/);
+			assert.match(String(search.details), /Do not retry web_search/);
 		} finally {
 			globalThis.fetch = realFetch;
 		}

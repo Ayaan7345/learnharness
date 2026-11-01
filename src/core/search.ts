@@ -8,10 +8,13 @@
  * (closed to new customers; dies Jan 2027) — replaced by Tavily + Brave.
  *
  * Owner decisions baked here:
- *  - NO default engine in the factory record: an engine is live iff its
- *    key is present. With a key, the engine auto-activates (the user never
- *    chooses an engine to make search work — setting the key is enough);
- *    agent.search.engine is only an explicit preference.
+ *  - NO default engine in the factory record: Tavily and Brave are live
+ *    iff their key is present. Firecrawl is live iff FIRECRAWL_API_URL is
+ *    set (its API key is optional). With that credential, the engine
+ *    auto-activates — the user never chooses an engine to make search
+ *    work. agent.search.engine is only an explicit preference.
+ *    Preference order when several are configured: Tavily, then Brave,
+ *    then Firecrawl. An explicit pin never falls through to another.
  *  - Nothing silently falls back: no engine live = search is honestly
  *    unavailable (the tool says so; the researcher sub-agent is disabled
  *    by the agent layer on the same signal — that rewiring is the Teacher
@@ -30,8 +33,8 @@ export interface SearchHit {
 	snippet: string;
 }
 
-/** The engine ids this wave ships (the catalog: curated keys + adapters). */
-export type SearchEngineId = "tavily" | "brave";
+/** The engine ids this port ships (the catalog: curated keys + adapters). */
+export type SearchEngineId = "tavily" | "brave" | "firecrawl";
 
 /** A live search engine: an id (for status/labels) + one operation. The
  *  adapters own their wire protocol (fetch, timeouts, error mapping) —

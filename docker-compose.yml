@@ -7,6 +7,12 @@ services:
     image: learnharness:latest
     restart: unless-stopped
     env_file: .env.server
+    # Optional: read web pages through Firecrawl on your LAN.
+    # Uncomment to enable. The LearnHarness container must reach this
+    # address directly (host.docker.internal does not resolve here).
+    # Leave it commented to keep the built-in page reader.
+    # environment:
+    #   FIRECRAWL_API_URL: http://192.168.7.5:3002
     ports:
       - "3000:3000"
     volumes:

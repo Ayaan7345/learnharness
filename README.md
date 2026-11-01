@@ -60,6 +60,7 @@ All three platforms support in-app updates.
 - **Your keys and models.** No LearnHarness subscription or markup. You pay your providers for usage; a live cost meter shows model costs.
 - **Local storage.** Your chats, graph, settings, and API keys live on your machine. Learning records are plain files you can inspect.
 - **External services.** Models run through your configured providers. Model requests send the context needed for the task; web research and dictation also contact external services. Local storage does not mean offline processing.
+- **Optional Firecrawl.** A Firecrawl server can read web pages for research. Set `FIRECRAWL_API_URL` (for example `http://192.168.7.5:3002`) in the server environment or under Settings → Providers → Search. No API key is required when that server has authentication off. See [Self-hosting](docs/self-hosting.md#firecrawl).
 - **Inspectable behavior.** System prompts are visible and editable. The app is open source under the AGPL-3.0 license.
 
 ## Development and support

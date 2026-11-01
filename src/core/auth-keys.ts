@@ -1,3 +1,5 @@
+import { normalizeFirecrawlApiUrl } from "./firecrawl.ts";
+
 /**
  * The curated auth-key catalog + shape rules (auth-keys wave, 2026-09-19).
  * PURE, browser-safe — no fs, no env. The catalog drives the auth page's
@@ -27,6 +29,10 @@ export interface AuthKeyInfo {
 	description: string;
 	/** Where the user gets a key (opens in the real browser via the shell). */
 	docsUrl: string;
+	/** False for a non-secret such as a server URL — the settings row shows the whole value. */
+	secret?: boolean;
+	/** Paste-field placeholder. Absent means "Paste key…". */
+	placeholder?: string;
 }
 
 export const AUTH_KEYS: readonly AuthKeyInfo[] = [
@@ -47,6 +53,20 @@ export const AUTH_KEYS: readonly AuthKeyInfo[] = [
 		label: "Brave Search",
 		description: "Web-search engine for the researcher sub-agent — the alternative to Tavily. Setting the key activates it.",
 		docsUrl: "https://brave.com/search/api/",
+	},
+	{
+		id: "FIRECRAWL_API_URL",
+		label: "Firecrawl URL",
+		description: "Address of a Firecrawl server, for example http://192.168.7.5:3002. Setting it makes the researcher read pages through that server. No key is required when authentication is off.",
+		docsUrl: "https://github.com/firecrawl/firecrawl",
+		secret: false,
+		placeholder: "http://192.168.7.5:3002",
+	},
+	{
+		id: "FIRECRAWL_API_KEY",
+		label: "Firecrawl",
+		description: "Optional API key for Firecrawl. Leave unset when that server has authentication disabled. Required for Firecrawl cloud.",
+		docsUrl: "https://github.com/firecrawl/firecrawl",
 	},
 ] as const;
 
@@ -174,6 +194,15 @@ export function validateKeyShape(id: string, rawValue: string): KeyShapeResult {
 		case "BRAVE_API_KEY":
 			// No public format — a length floor + paste hygiene only.
 			return nonEmpty(20);
+		case "FIRECRAWL_API_URL": {
+			const url = normalizeFirecrawlApiUrl(value);
+			return url
+				? { ok: true }
+				: { ok: false, error: `${id} must be an http(s) URL without a username, password, query, or fragment` };
+		}
+		case "FIRECRAWL_API_KEY":
+			// Cloud keys and self-hosted tokens have no shared prefix.
+			return nonEmpty(8);
 		case "DEEPGRAM_API_KEY":
 			// No public format — the length floor only catches truncated pastes.
 			return nonEmpty(20);
