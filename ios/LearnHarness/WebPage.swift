@@ -1,5 +1,8 @@
+import OSLog
 import SwiftUI
 import WebKit
+
+private let pageLog = Logger(subsystem: "com.ayaan7345.learnharness", category: "page")
 
 /// One server page shown inside a native screen (a session's transcript, the
 /// graph, settings). The app draws the chrome around it; the page reports its
@@ -63,6 +66,9 @@ final class WebPage: NSObject {
 			content.addUserScript(WKUserScript(source: startupScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 		}
 		content.add(WeakMessageHandler(self), name: "lhNative")
+		content.addUserScript(WKUserScript(source: Self.diagnosticsScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+		content.addScriptMessageHandler(NativeTransport(server: server), contentWorld: .page, name: "lhFetch")
+		content.addUserScript(WKUserScript(source: Self.transportScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
 
 		let webView = WKWebView(frame: .zero, configuration: config)
 		webView.navigationDelegate = self
@@ -103,6 +109,61 @@ final class WebPage: NSObject {
 	})();
 	"""
 
+	/// Page errors and failed requests: kept for the Connection Test report
+	/// (PageDiagnostics) and written to the system log (Console.app,
+	/// subsystem com.ayaan7345.learnharness).
+	private static let diagnosticsScript = """
+	(() => {
+		const post = (text) => { try { window.webkit.messageHandlers.lhNative.postMessage({ type: "log", text: String(text).slice(0, 2000) }); } catch {} };
+		const error = console.error.bind(console);
+		console.error = (...args) => { post("console.error " + args.map(String).join(" ")); error(...args); };
+		window.addEventListener("error", (e) => post("error " + e.message + " @" + e.filename + ":" + e.lineno));
+		window.addEventListener("unhandledrejection", (e) => post("unhandledrejection " + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+		const realFetch = window.fetch.bind(window);
+		window.fetch = async (input, init) => {
+			const url = typeof input === "string" ? input : input.url;
+			const method = (init && init.method) || "GET";
+			try {
+				const res = await realFetch(input, init);
+				if (!res.ok) post("fetch " + method + " " + url + " → " + res.status);
+				return res;
+			} catch (err) {
+				post("fetch " + method + " " + url + " FAILED " + err);
+				throw err;
+			}
+		};
+	})();
+	"""
+
+	/// Every write the page makes to the server's API (answers, practice
+	/// thinking, Next, Retry, dismissals, settings) goes over the app's own
+	/// connection (NativeTransport) instead of the web view's. On iPhone the
+	/// web view's POSTs to a LAN server could stall without ever arriving,
+	/// leaving "Thinking…" or a dead Submit button; the app's requests get
+	/// through. Reads, uploads (non-string bodies) and other sites keep the
+	/// page's own fetch.
+	private static let transportScript = """
+	(() => {
+		const handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lhFetch;
+		if (!handler) return;
+		const pageFetch = window.fetch.bind(window);
+		window.fetch = async (input, init) => {
+			const request = typeof input === "string" || input instanceof URL ? null : input;
+			const url = new URL(request ? request.url : String(input), location.href);
+			const method = String((init && init.method) || (request && request.method) || "GET").toUpperCase();
+			const body = init ? init.body : undefined;
+			const native = method !== "GET" && method !== "HEAD" && url.origin === location.origin &&
+				url.pathname.startsWith("/api/") && (body === undefined || body === null || typeof body === "string");
+			if (!native) return pageFetch(input, init);
+			const headers = {};
+			new Headers((init && init.headers) || (request && request.headers) || {}).forEach((value, key) => { headers[key] = value; });
+			const reply = await handler.postMessage({ path: url.pathname + url.search, method, headers, body: body ?? null });
+			const empty = reply.status === 204 || reply.status === 304;
+			return new Response(empty ? null : reply.body, { status: reply.status, headers: reply.contentType ? { "content-type": reply.contentType } : {} });
+		};
+	})();
+	"""
+
 	func isServerOrigin(_ url: URL?) -> Bool {
 		guard let url else { return false }
 		return url.scheme == server.scheme && url.host == server.host && url.port == server.port
@@ -110,6 +171,10 @@ final class WebPage: NSObject {
 
 	fileprivate func receive(_ body: Any) {
 		guard let message = body as? [String: Any] else { return }
+		if message["type"] as? String == "log" {
+			PageDiagnostics.record("\(path): \(message["text"] as? String ?? "")")
+			return
+		}
 		onMessage?(message)
 	}
 
@@ -121,6 +186,52 @@ final class WebPage: NSObject {
 			popover.sourceRect = CGRect(x: webView.bounds.midX, y: webView.bounds.midY, width: 0, height: 0)
 		}
 		top?.present(controller, animated: true)
+	}
+}
+
+/// Recent page errors and request failures, newest last — shown in the
+/// Connection Test report so a problem on the phone can be seen.
+@MainActor
+enum PageDiagnostics {
+	private(set) static var recent: [String] = []
+
+	static func record(_ line: String) {
+		let stamped = "\(Date().formatted(date: .omitted, time: .standard)) \(line)"
+		pageLog.notice("\(stamped, privacy: .public)")
+		recent.append(stamped)
+		if recent.count > 40 { recent.removeFirst(recent.count - 40) }
+	}
+}
+
+/// Carries the page's API writes over URLSession (shared cookies, the
+/// app's User-Agent) and hands the response back to the page's fetch.
+private final class NativeTransport: NSObject, WKScriptMessageHandlerWithReply {
+	let api: ServerAPI
+	init(server: URL) { api = ServerAPI(server: server) }
+
+	func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) async -> (Any?, String?) {
+		guard let call = message.body as? [String: Any], let path = call["path"] as? String, path.hasPrefix("/api/"),
+		      let method = call["method"] as? String else {
+			return (nil, "Bad request from the page.")
+		}
+		var request = api.request(path, method: method, timeout: 60)
+		for (key, value) in call["headers"] as? [String: String] ?? [:] where key.lowercased() != "user-agent" {
+			request.setValue(value, forHTTPHeaderField: key)
+		}
+		if let body = call["body"] as? String { request.httpBody = Data(body.utf8) }
+		do {
+			let (data, response) = try await api.raw(request)
+			let status = response.statusCode
+			if status >= 400 { PageDiagnostics.record("\(method) \(path) → \(status) \(ServerAPI.errorText(data) ?? "")") }
+			return ([
+				"status": status,
+				"body": String(decoding: data, as: UTF8.self),
+				"contentType": response.value(forHTTPHeaderField: "Content-Type") ?? "",
+			], nil)
+		} catch {
+			PageDiagnostics.record("\(method) \(path) FAILED \(error.localizedDescription)")
+			return (nil, error.localizedDescription)
+		}
 	}
 }
 

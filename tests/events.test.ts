@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { emit, subscribe, type ServerEvent } from "../src/core/events.ts";
-import { eventsResponse } from "../src/server/events-stream.ts";
+import { announceSettingsChanged, eventsResponse } from "../src/server/events-stream.ts";
 
 // ─── the bus ────────────────────────────────────────────────────────────────
 
@@ -142,5 +142,20 @@ describe("eventsResponse (the SSE seam)", () => {
 		assert.equal(done, false, "the channel survives every event");
 		assert.match(decode(value!), /event: chats-changed/);
 		await reader.cancel();
+	});
+});
+
+describe("announceSettingsChanged (settings shared across devices)", () => {
+	it("reaches every connected device as a settings-changed frame", async () => {
+		const phone = eventsResponse().body!.getReader();
+		const mac = eventsResponse().body!.getReader();
+		await skipOpening(phone);
+		await skipOpening(mac);
+		announceSettingsChanged("keys");
+		for (const reader of [phone, mac]) {
+			const { value } = await reader.read();
+			assert.equal(decode(value!), 'event: settings-changed\ndata: {"section":"keys"}\n\n');
+			await reader.cancel();
+		}
 	});
 });

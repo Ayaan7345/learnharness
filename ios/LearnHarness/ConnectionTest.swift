@@ -39,6 +39,10 @@ final class ConnectionTest {
 			lines.append("\(mark) \(step.title)\(time): \(step.detail)")
 		}
 		if let reply { lines.append("Reply: \(reply)") }
+		if !PageDiagnostics.recent.isEmpty {
+			lines.append("Recent page events:")
+			lines.append(contentsOf: PageDiagnostics.recent)
+		}
 		return lines.joined(separator: "\n")
 	}
 
@@ -267,6 +271,13 @@ struct ConnectionTestView: View {
 				if let reply = test.reply {
 					Section("Model's reply") {
 						Text(reply).font(.body.monospaced())
+					}
+				}
+				if !test.isRunning && !PageDiagnostics.recent.isEmpty {
+					Section("Recent page events") {
+						ForEach(Array(PageDiagnostics.recent.suffix(10).reversed().enumerated()), id: \.offset) { _, line in
+							Text(line).font(Theme.ui(11)).foregroundStyle(Theme.muted)
+						}
 					}
 				}
 				Section {

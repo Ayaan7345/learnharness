@@ -28,7 +28,13 @@
  * The closure shape (teardown assigned in start, called in cancel) is the
  * ui-stream subscribe() pattern.
  */
-import { subscribe, type ServerEvent } from "../core/events.ts";
+import { emit, subscribe, type ServerEvent } from "../core/events.ts";
+
+/** Tells every connected device that server-wide settings changed (keys,
+ *  custom provider, a settings section) so each re-reads its copy. */
+export function announceSettingsChanged(section: string): void {
+	emit("settings-changed", { section });
+}
 
 /** One window's subscription as an SSE Response. */
 export function eventsResponse(): Response {

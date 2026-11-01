@@ -153,6 +153,19 @@ struct ServerAPI: Sendable {
 		return request
 	}
 
+	/// Sends a request and returns the response whatever its status.
+	func raw(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+		let data: Data
+		let response: URLResponse
+		do {
+			(data, response) = try await Self.session.data(for: request)
+		} catch let error as URLError {
+			throw APIError.unreachable(Self.describe(error, server: server))
+		}
+		guard let http = response as? HTTPURLResponse else { throw APIError.badResponse }
+		return (data, http)
+	}
+
 	/// Sends a request and turns HTTP failures into APIError.
 	@discardableResult
 	func send(_ request: URLRequest) async throws -> Data {
