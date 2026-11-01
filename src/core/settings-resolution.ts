@@ -32,6 +32,7 @@ import {
 	MODEL_SLOTS,
 	ROLE_SLOT,
 	type AgentSettings,
+	type JevSettings,
 	type BackgroundModelRole,
 	type FactorySettings,
 	type GeneralSettings,
@@ -86,6 +87,8 @@ export interface EffectiveSettings {
 		/** Prober graph tools (wave 7): passthrough delta as stored —
 		 * absent/undefined enabled = ON; consumers use graphToolsEnabled. */
 		graphTools: { enabled?: boolean };
+		/** Jev switches, resolved: absent = off. */
+		jev: Required<JevSettings>;
 	};
 	/** The resolved strong/cheap/vision slots: each tier's concrete model or
 	 *  NULL when the tier holds no model (no factory floor — BYOK all the
@@ -192,6 +195,11 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			prompts: agent.prompts ?? {},
 			search: agent.search ?? {},
 			graphTools: agent.graphTools ?? {},
+			jev: {
+				toolGuard: agent.jev?.toolGuard ?? false,
+				answerCheck: agent.jev?.answerCheck ?? false,
+				quizCheck: agent.jev?.quizCheck ?? false,
+			},
 		},
 		models: {
 			strong: resolveSlot(modelsSection.strong),

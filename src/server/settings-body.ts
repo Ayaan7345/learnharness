@@ -15,6 +15,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { isHexColor, type ChatSettings } from "../core";
 import type {
 	AgentSettings,
+	JevSettings,
 	AppearanceSettings,
 	BackgroundModelRole,
 	CompactionSettings,
@@ -25,7 +26,7 @@ import type {
 	ModelsSettings,
 	RoleModelOverride,
 } from "../core/settings.ts";
-import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, COMPACTION_THRESHOLD_FLOOR, JEV_SWITCHES, CUSTOM_MODEL_PIN_FLOOR, EXTRACTION_CHUNK_TOKENS_FLOOR, MODEL_SLOTS } from "../core/settings.ts";
 import { WRITABLE_TOOL_KEYS } from "../core/pending.ts";
 import { isDictationLanguage } from "../core/dictation.ts";
 
@@ -206,6 +207,20 @@ export function parseAgentSettingsBody(body: unknown): SettingsBodyResult<AgentS
 			return { ok: false, error: "graphTools.enabled must be a boolean" };
 		}
 		settings.graphTools = graphTools.enabled === undefined ? {} : { enabled: graphTools.enabled };
+	}
+	// Jev switches: strict write side — object of known boolean keys.
+	if (raw.jev !== undefined) {
+		const jev = asRecord(raw.jev);
+		if (!jev) return { ok: false, error: "jev must be an object" };
+		const parsed: JevSettings = {};
+		for (const [key, value] of Object.entries(jev)) {
+			if (!(JEV_SWITCHES as readonly string[]).includes(key)) {
+				return { ok: false, error: `unknown jev switch "${key}" (supported: ${JEV_SWITCHES.join(", ")})` };
+			}
+			if (typeof value !== "boolean") return { ok: false, error: `jev.${key} must be a boolean` };
+			parsed[key as (typeof JEV_SWITCHES)[number]] = value;
+		}
+		settings.jev = parsed;
 	}
 	return { ok: true, settings };
 }

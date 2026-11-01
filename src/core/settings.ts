@@ -357,12 +357,27 @@ export interface AgentSettings {
 	 *  tool-toggles map. Absent = enabled (the toggle discipline); the
 	 *  effective gate composes graph.enabled AND this switch. */
 	graphTools?: { enabled?: boolean };
+	/** Jev decision checks (TypeSafe's Jev through OpenRouter). Each switch
+	 *  is absent = OFF: toolGuard allows or blocks every agent tool call,
+	 *  answerCheck adds an understanding hint to explain answers and
+	 *  practice submissions, quizCheck blocks a quiz whose answer key Jev
+	 *  disagrees with. All need an OpenRouter key. */
+	jev?: JevSettings;
 	/** System-prompt override SWITCHES keyed by segment path (absent key =
 	 *  off). Switch-on requires the override file to exist (enforced by the
 	 *  route); the switch is explicit so users keep a file on disk but run
 	 *  the source default to compare (owner decision 2026-09-19). */
 	prompts?: Record<string, boolean>;
 }
+
+/** The Jev switches (AgentSettings.jev). Absent key = off. */
+export interface JevSettings {
+	toolGuard?: boolean;
+	answerCheck?: boolean;
+	quizCheck?: boolean;
+}
+
+export const JEV_SWITCHES = ["toolGuard", "answerCheck", "quizCheck"] as const;
 
 /** Markdown-rendering knobs — the bare-bones set (owner decision). */
 export interface MdRenderingSettings {
@@ -708,6 +723,15 @@ function sanitizeAgent(raw: Record<string, unknown>): AgentSettings {
 		const enabled = (raw.graphTools as Record<string, unknown>).enabled;
 		if (enabled === undefined) out.graphTools = {};
 		else if (typeof enabled === "boolean") out.graphTools = { enabled };
+	}
+	// Jev switches: lenient read side (non-boolean values drop → off).
+	if (raw.jev !== null && typeof raw.jev === "object" && !Array.isArray(raw.jev)) {
+		const jev: JevSettings = {};
+		for (const key of JEV_SWITCHES) {
+			const value = (raw.jev as Record<string, unknown>)[key];
+			if (typeof value === "boolean") jev[key] = value;
+		}
+		out.jev = jev;
 	}
 	return out;
 }

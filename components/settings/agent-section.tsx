@@ -135,6 +135,22 @@ export function composeGraphTools(agent: AgentSettings | undefined, on: boolean)
 	return { ...agent, graphTools: { enabled: on } };
 }
 
+/** Compose one Jev switch (agent.jev; absent = off). Pure — exported for tests. */
+export function composeJev(
+	agent: AgentSettings | undefined,
+	key: "toolGuard" | "answerCheck" | "quizCheck",
+	on: boolean,
+): AgentSettings {
+	return { ...agent, jev: { ...agent?.jev, [key]: on } };
+}
+
+/** The Jev rows: label, hint, settings key. */
+const JEV_ROWS = [
+	{ key: "toolGuard", label: "Jev tool guard", hint: "Blocks tutor tool calls that don't fit the lesson" },
+	{ key: "answerCheck", label: "Jev answer check", hint: "Gives the tutor a read on how well you understood" },
+	{ key: "quizCheck", label: "Jev quiz answer check", hint: "Stops a quiz whose answer key looks wrong" },
+] as const;
+
 /** Compose: one slot's model/thinking override. Empty model = absent
  *  override (Default — falls to the factory pin); empty thinking = the
  *  tier keeps its resolved thinking budget. Per-field independence, same
@@ -310,6 +326,8 @@ export function AgentSection({
 	/** Which search engines have a key (/api/keys) — the no-keys-anywhere
 	 *  state grays the row; per-engine marks ride the menu rows. */
 	const [engineKeys, setEngineKeys] = useState<Partial<Record<(typeof SEARCH_ENGINES)[number], boolean>>>({});
+	/** Jev runs through the OpenRouter key; without it the Jev rows gray out. */
+	const [openRouterKey, setOpenRouterKey] = useState(false);
 	const [prompts, setPrompts] = useState<{ prober: SegmentInfo[]; teacher: SegmentInfo[] } | null>(null);
 	const [openSegment, setOpenSegment] = useState<string | null>(null);
 	const [segmentDraft, setSegmentDraft] = useState<Record<string, string>>({});
@@ -362,6 +380,7 @@ export function AgentSection({
 					present[id] = body.keys.some((k) => k.id === ENGINE_ENV[id] && k.present);
 				}
 				setEngineKeys(present);
+				setOpenRouterKey(body.keys.some((k) => k.id === "OPENROUTER_API_KEY" && k.present));
 			})
 			.catch(() => {});
 	}, []);
@@ -826,6 +845,25 @@ export function AgentSection({
 						</SettingsRow>
 					);
 				})()}
+			</SettingsGroup>
+
+			<SettingsGroup label="Jev decisions" testid="group-jev">
+				{JEV_ROWS.map((row) => (
+					<SettingsRow
+						key={row.key}
+						label={row.label}
+						hint={openRouterKey ? row.hint : "Needs an OpenRouter key"}
+						testid={`jev-${row.key}-row`}
+						dimmed={!openRouterKey}
+					>
+						<Toggle
+							checked={agent?.jev?.[row.key] ?? false}
+							disabled={!openRouterKey}
+							label={row.label}
+							onChange={(on) => onSectionChange(composeJev(agent, row.key, on))}
+						/>
+					</SettingsRow>
+				))}
 			</SettingsGroup>
 
 			<SettingsGroup label="Context" testid="group-context">

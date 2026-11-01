@@ -1,5 +1,5 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { AgentEvent, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentEvent, AgentMessage, AgentOptions, AgentTool } from "@earendil-works/pi-agent-core";
 import { invalidInputResult, questionResult } from "./tool-execute.ts";
 import { providerEventObserver } from "./provider-events.ts";
 import type { Usage } from "@earendil-works/pi-ai";
@@ -130,6 +130,9 @@ export interface AgentBuildOptions {
 	 *  <chatId>.jsonl via providerEventObserver — the GLM-truncation /
 	 *  DeepSeek-id incident layer. Absent or env-off → no observer. */
 	chatId?: string;
+	/** The Jev tool guard / quiz answer-key check (server/jev.ts
+	 *  jevBeforeToolCall). Absent = every call runs unchecked. */
+	beforeToolCall?: AgentOptions["beforeToolCall"];
 }
 
 /**
@@ -220,6 +223,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		// Wave C registerLiveAgent-before-runPiTurn design depends on.
 		// undefined preserves normal scheduling (the old boolean false).
 		finishTurn: (turn) => (stopper(turn) ? { action: "end" } : undefined),
+		...(opts.beforeToolCall ? { beforeToolCall: opts.beforeToolCall } : {}),
 		// Wave C (2026-09-26, owner correction same day): markers handed to a
 		// live run drain from pi's STEERING queue — the lesson loop is one
 		// continuous teach→quiz→teach run, so delivery must inject at turn

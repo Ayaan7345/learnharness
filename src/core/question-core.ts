@@ -19,6 +19,7 @@
 
 import { Type, type Static } from "typebox";
 import { stripModelValueDebris } from "./value-debris.ts";
+import { understandingHint, type JevUnderstanding } from "./jev.ts";
 
 // ─── shared types ───────────────────────────────────────────────────────────
 
@@ -464,6 +465,9 @@ export interface QuestionAnswerData {
 	readingThinking?: string;
 	confidence?: number; // quiz only: the learner's stated probability (0-100, raw) that his selected answer is correct — never sent on "I don't know" (owner, 2026-10-01)
 	correct?: boolean; // quiz only
+	/** explain only: Jev's understanding read (agent.jev.answerCheck) —
+	 *  server-written, model-facing, never shown to the learner. */
+	jev?: JevUnderstanding;
 	correctIndices?: number[]; // quiz only (rendering)
 	committed?: string; // explain only (rendering): the model's committed answer
 	explanation?: string; // quiz only (rendering)
@@ -798,5 +802,6 @@ export function compactAnswerForModel(ad: QuestionAnswerData): Record<string, un
 	const thinking = ad.thinking ?? ad.note;
 	if (thinking) out.thinking = thinking;
 	if (ad.readingThinking) out.thinkingWhileReading = ad.readingThinking;
+	if (ad.jev) out.jevUnderstanding = understandingHint(ad.jev);
 	return out;
 }

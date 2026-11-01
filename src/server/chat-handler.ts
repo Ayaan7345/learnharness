@@ -60,6 +60,7 @@ import {
 	type ChatInput,
 	type TurnInput,
 } from "../core/input-events.ts";
+import { jevBeforeToolCall, withJevUnderstanding } from "./jev.ts";
 import { steerDelivered } from "../core/contracts.ts";
 import type {CallUsage} from "../core/contracts.ts";
 
@@ -334,6 +335,9 @@ export async function handleChatInput(
 		}
 		throw err;
 	}
+	// Jev understanding hint (agent.jev.answerCheck): explain answers and
+	// practice submissions carry Jev's read to the teacher. Fails open.
+	if (effective.agent.jev.answerCheck) appends = await withJevUnderstanding(record.messages, appends);
 
 	// THE PARALLEL-QUESTION GATE (owner, 2026-10-03 — the deepseek parallel
 	// batch incident): an answer that leaves a SIBLING question dangling
@@ -468,6 +472,13 @@ export async function handleChatInput(
 		// point as the tool delta — the agent layer composes the system
 		// prompt fresh per turn, swapping in any enabled override segments.
 		promptSwitches: effective.agent.prompts,
+		// Jev (agent.jev): the tool guard and the quiz answer-key check,
+		// one request per tool call; fails open.
+		beforeToolCall: jevBeforeToolCall({
+			phase: record.kind === "practice" ? "practice" : teaching ? "teach" : "probe",
+			toolGuard: effective.agent.jev.toolGuard,
+			quizCheck: effective.agent.jev.quizCheck,
+		}),
 	};
 	// PRACTICE BRANCH (owner design, 2026-10-04): a kind:"practice"
 	// session builds the practitioner from turn 1 — no prober→teacher
